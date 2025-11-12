@@ -1,0 +1,248 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ContactType {
+  CUSTOMER
+  SUPPLIER
+  OTHER
+}
+
+enum TransactionDirection {
+  INFLOW
+  OUTFLOW
+}
+
+enum TransactionMethod {
+  CASH
+  BANK
+  POS
+  CARD
+  CHECK
+}
+
+enum TransactionType {
+  CASH_IN
+  CASH_OUT
+  BANK_IN
+  BANK_OUT
+  POS_COLLECTION
+  POS_COMMISSION
+  CARD_EXPENSE
+  CARD_PAYMENT
+  CHECK_PAYMENT
+  OTHER
+}
+
+enum TransactionCategory {
+  CUSTOMER
+  SUPPLIER
+  SALARY
+  EXPENSE
+  CREDIT_CARD_PAYMENT
+  TAX
+  SOCIAL_SECURITY
+  FUEL
+  FOOD
+  MAINTENANCE
+  REPRESENTATION
+  COMMISSION
+  TRANSFER
+  OTHER
+}
+
+enum CheckStatus {
+  IN_SAFE
+  ENDORSED
+  ISSUED
+  PAID
+}
+
+enum CheckMoveAction {
+  IN
+  OUT
+  PAYMENT
+  ISSUE
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  fullName     String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+
+  transactions Transaction[]
+  attachments  Attachment[]
+  checkMoves   CheckMove[]   @relation("CheckMovePerformer")
+}
+
+model BankAccount {
+  id             String   @id @default(uuid())
+  name           String   @unique
+  iban           String?  @unique
+  currency       String   @default("TRY")
+  initialBalance Decimal  @default("0") @db.Decimal(18, 2)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  transactions Transaction[]
+  cards        Card[]
+}
+
+model Card {
+  id            String   @id @default(uuid())
+  name          String   @unique
+  bankAccountId String?
+  limit         Decimal  @default("0") @db.Decimal(18, 2)
+  currentRisk   Decimal  @default("0") @db.Decimal(18, 2)
+  statementDay  Int?
+  dueDay        Int?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(6)
+
+  bankAccount  BankAccount?  @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  transactions Transaction[]
+}
+
+model Contact {
+  id        String      @id @default(uuid())
+  type      ContactType
+  name      String
+  shortName String?
+  taxNo     String?
+  phone     String?
+  email     String?
+  notes     String?
+  isActive  Boolean     @default(true)
+  createdAt DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime    @updatedAt @db.Timestamptz(6)
+
+  transactions Transaction[]
+  checks       Check[]
+
+  @@unique([name, type])
+}
+
+model Attachment {
+  id         String   @id @default(uuid())
+  path       String
+  filename   String
+  mimeType   String
+  size       Int
+  uploaderId String?
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  check    Check?
+  uploader User?  @relation(fields: [uploaderId], references: [id], onDelete: SetNull)
+}
+
+model Transaction {
+  id               String               @id @default(uuid())
+  txnNo            String               @unique
+  method           TransactionMethod
+  type             TransactionType
+  direction        TransactionDirection
+  amount           Decimal              @db.Decimal(18, 2)
+  currency         String               @default("TRY")
+  txnDate          DateTime             @db.Timestamptz(6)
+  description      String?
+  note             String?
+  channelReference String?
+  category         TransactionCategory?
+  bankAccountId    String?
+  cardId           String?
+  contactId        String?
+  checkId          String?
+  createdById      String
+  posBrut          Decimal?             @db.Decimal(18, 2)
+  posKomisyon      Decimal?             @db.Decimal(18, 2)
+  posNet           Decimal?             @db.Decimal(18, 2)
+  posEffectiveRate Decimal?             @db.Decimal(10, 4)
+  meta             Json?
+  createdAt        DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime             @updatedAt @db.Timestamptz(6)
+
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  card        Card?        @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  contact     Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  check       Check?       @relation(fields: [checkId], references: [id], onDelete: SetNull)
+  createdBy   User         @relation(fields: [createdById], references: [id])
+  tags        TxnTag[]
+  checkMoves  CheckMove[]
+}
+
+model Check {
+  id           String      @id @default(uuid())
+  serialNo     String
+  bank         String
+  amount       Decimal     @db.Decimal(18, 2)
+  dueDate      DateTime    @db.Timestamptz(6)
+  status       CheckStatus @default(IN_SAFE)
+  contactId    String?
+  attachmentId String?     @unique
+  notes        String?
+  issuedBy     String?
+  createdAt    DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime    @updatedAt @db.Timestamptz(6)
+
+  contact      Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  attachment   Attachment?   @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
+  transactions Transaction[]
+  moves        CheckMove[]
+
+  @@unique([serialNo])
+  @@index([dueDate])
+  @@index([status])
+}
+
+model CheckMove {
+  id            String          @id @default(uuid())
+  checkId       String
+  action        CheckMoveAction
+  transactionId String?
+  description   String?
+  performedById String?
+  performedAt   DateTime        @default(now()) @db.Timestamptz(6)
+
+  check       Check        @relation(fields: [checkId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  performedBy User?        @relation("CheckMovePerformer", fields: [performedById], references: [id], onDelete: SetNull)
+
+  @@index([checkId])
+  @@index([performedAt])
+}
+
+model Tag {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  color     String?  @default("#1c3360")
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  transactions TxnTag[]
+}
+
+model TxnTag {
+  transactionId String
+  tagId         String
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  tag         Tag         @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([transactionId, tagId])
+}
