@@ -1,12 +1,26 @@
-import type { NextFunction, Request, Response } from "express";
+import type { NextFunction, Request, Response, Express } from "express";
 import { TransactionService } from "../services/transaction.service.js";
+
+const buildActor = (req: Request) => ({
+  id: req.user!.sub,
+  email: req.user!.email,
+  fullName: req.user!.fullName,
+});
+
+const mapFilesToAttachments = (files: Express.Multer.File[] = []) =>
+  files.map((file) => ({
+    path: file.path,
+    filename: file.filename,
+    mimeType: file.mimetype,
+    size: file.size,
+  }));
 
 export class TransactionController {
   static async cashIn(req: Request, res: Response, next: NextFunction) {
     try {
       await TransactionService.cashIn({
         ...req.body,
-        createdById: req.user!.sub,
+        actor: buildActor(req),
       });
       res.status(201).json({ message: "Nakit giriş kaydedildi" });
     } catch (error) {
@@ -18,7 +32,7 @@ export class TransactionController {
     try {
       await TransactionService.cashOut({
         ...req.body,
-        createdById: req.user!.sub,
+        actor: buildActor(req),
       });
       res.status(201).json({ message: "Nakit çıkış kaydedildi" });
     } catch (error) {
@@ -30,7 +44,7 @@ export class TransactionController {
     try {
       await TransactionService.bankIn({
         ...req.body,
-        createdById: req.user!.sub,
+        actor: buildActor(req),
       });
       res.status(201).json({ message: "Banka girişi kaydedildi" });
     } catch (error) {
@@ -42,7 +56,7 @@ export class TransactionController {
     try {
       await TransactionService.bankOut({
         ...req.body,
-        createdById: req.user!.sub,
+        actor: buildActor(req),
       });
       res.status(201).json({ message: "Banka çıkışı kaydedildi" });
     } catch (error) {
@@ -54,7 +68,7 @@ export class TransactionController {
     try {
       await TransactionService.posCollection({
         ...req.body,
-        createdById: req.user!.sub,
+        actor: buildActor(req),
       });
       res.status(201).json({ message: "POS tahsilatı işlendi" });
     } catch (error) {
@@ -64,9 +78,11 @@ export class TransactionController {
 
   static async cardExpense(req: Request, res: Response, next: NextFunction) {
     try {
+      const files = (req.files as Express.Multer.File[] | undefined) ?? [];
       await TransactionService.cardExpense({
         ...req.body,
-        createdById: req.user!.sub,
+        actor: buildActor(req),
+        attachments: mapFilesToAttachments(files),
       });
       res.status(201).json({ message: "Kart harcaması kaydedildi" });
     } catch (error) {
@@ -78,7 +94,7 @@ export class TransactionController {
     try {
       await TransactionService.cardPayment({
         ...req.body,
-        createdById: req.user!.sub,
+        actor: buildActor(req),
       });
       res.status(201).json({ message: "Kart ödemesi kaydedildi" });
     } catch (error) {
@@ -89,7 +105,7 @@ export class TransactionController {
   static async delete(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params as { id: string };
-      await TransactionService.deleteTransaction(id);
+      await TransactionService.deleteTransaction(id, buildActor(req));
       res.json({ message: "İşlem silindi" });
     } catch (error) {
       next(error);

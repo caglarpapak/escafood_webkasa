@@ -1,5 +1,20 @@
-import type { NextFunction, Request, Response } from "express";
+import type { NextFunction, Request, Response, Express } from "express";
 import { CheckService } from "../services/check.service.js";
+import { HttpError } from "../middlewares/error-handler.js";
+
+const buildActor = (req: Request) => ({
+  id: req.user!.sub,
+  email: req.user!.email,
+  fullName: req.user!.fullName,
+});
+
+const mapFilesToAttachments = (files: Express.Multer.File[] = []) =>
+  files.map((file) => ({
+    path: file.path,
+    filename: file.filename,
+    mimeType: file.mimetype,
+    size: file.size,
+  }));
 
 export class CheckController {
   static async registerIn(req: Request, res: Response, next: NextFunction) {
@@ -7,8 +22,8 @@ export class CheckController {
       await CheckService.registerIn({
         ...req.body,
         amount: Number(req.body.amount),
-        createdById: req.user!.sub,
-        attachment: req.file,
+        actor: buildActor(req),
+        attachments: mapFilesToAttachments(req.files as Express.Multer.File[]),
       });
       res.status(201).json({ message: "Çek kasaya alındı" });
     } catch (error) {
@@ -18,9 +33,28 @@ export class CheckController {
 
   static async registerOut(req: Request, res: Response, next: NextFunction) {
     try {
+      const { mode } = req.body as { mode?: string };
+      if (mode === "yeni_duzenlenen") {
+        const { serialNo, bank, amount, dueDate } = req.body;
+        if (!serialNo || !bank || !amount || !dueDate) {
+          throw new HttpError(
+            400,
+            "Yeni düzenlenen çek için seri no, banka, tutar ve vade tarihini giriniz",
+          );
+        }
+        await CheckService.issueCompanyCheck({
+          ...req.body,
+          amount: Number(req.body.amount),
+          actor: buildActor(req),
+          attachments: mapFilesToAttachments(req.files as Express.Multer.File[]),
+        });
+        res.status(201).json({ message: "Şirket çeki düzenlendi" });
+        return;
+      }
+
       await CheckService.registerOut({
         ...req.body,
-        createdById: req.user!.sub,
+        actor: buildActor(req),
       });
       res.status(201).json({ message: "Çek çıkışı kaydedildi" });
     } catch (error) {
@@ -33,8 +67,8 @@ export class CheckController {
       await CheckService.issueCompanyCheck({
         ...req.body,
         amount: Number(req.body.amount),
-        createdById: req.user!.sub,
-        attachment: req.file,
+        actor: buildActor(req),
+        attachments: mapFilesToAttachments(req.files as Express.Multer.File[]),
       });
       res.status(201).json({ message: "Şirket çeki düzenlendi" });
     } catch (error) {
@@ -47,7 +81,7 @@ export class CheckController {
       await CheckService.payCheck({
         ...req.body,
         amount: Number(req.body.amount),
-        createdById: req.user!.sub,
+        actor: buildActor(req),
       });
       res.status(201).json({ message: "Çek ödemesi kaydedildi" });
     } catch (error) {

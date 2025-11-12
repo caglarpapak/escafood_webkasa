@@ -6,6 +6,7 @@ import { ReportService } from "../services/report.service.js";
 import { generateDailyReportCSV, generateDailyReportPDF } from "../utils/report-export.js";
 
 const RECIPIENT = "muhasebe@esca-food.com";
+const TIMEZONE = "Europe/Istanbul";
 
 const formatHtmlSummary = (report: Awaited<ReturnType<typeof ReportService.dailyLedger>>) => `
   <h2>Esca Food Günlük Kasa Özeti</h2>
@@ -67,20 +68,28 @@ export const initializeReportSchedulers = () => {
   }
 
   // Hourly summary at minute 0
-  cron.schedule("0 * * * *", async () => {
-    try {
-      await sendReportEmail("hourly");
-    } catch (error) {
-      console.error("Saatlik rapor gönderimi başarısız:", error);
-    }
-  });
+  cron.schedule(
+    "0 * * * *",
+    async () => {
+      try {
+        await sendReportEmail("hourly");
+      } catch (error) {
+        console.error("Saatlik rapor gönderimi başarısız:", error);
+      }
+    },
+    { timezone: TIMEZONE },
+  );
 
   // Daily summary at 23:59
-  cron.schedule("59 23 * * *", async () => {
-    try {
-      await sendReportEmail("daily");
-    } catch (error) {
-      console.error("Gün sonu rapor gönderimi başarısız:", error);
-    }
-  });
+  cron.schedule(
+    "59 23 * * *",
+    async () => {
+      try {
+        await sendReportEmail("daily");
+      } catch (error) {
+        console.error("Gün sonu rapor gönderimi başarısız:", error);
+      }
+    },
+    { timezone: TIMEZONE },
+  );
 };

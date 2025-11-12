@@ -50,6 +50,7 @@
 - Transaction endpoint'leri: nakit, banka, pos, kart gider, kart ödemesi, silme.
 - Çek endpoint'leri: giriş, çıkış, rapor, ödeme.
 - Rapor endpoint'leri: `/reports/daily` PDF/CSV için veri sağlar.
+- Kontak içe aktarma: `/contacts/import` Excel şablonu üzerinden upsert.
 - Middleware: auth, error handler, request validation (Zod/Yup).
 
 ### İş Akışları

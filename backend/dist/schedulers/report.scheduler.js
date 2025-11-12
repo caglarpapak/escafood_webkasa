@@ -5,6 +5,7 @@ import { sendMail } from "../lib/mailer.js";
 import { ReportService } from "../services/report.service.js";
 import { generateDailyReportCSV, generateDailyReportPDF } from "../utils/report-export.js";
 const RECIPIENT = "muhasebe@esca-food.com";
+const TIMEZONE = "Europe/Istanbul";
 const formatHtmlSummary = (report) => `
   <h2>Esca Food Günlük Kasa Özeti</h2>
   <p>Periyot: ${format(report.period.start, "dd.MM.yyyy")} - ${format(report.period.end, "dd.MM.yyyy")}</p>
@@ -65,7 +66,7 @@ export const initializeReportSchedulers = () => {
         catch (error) {
             console.error("Saatlik rapor gönderimi başarısız:", error);
         }
-    });
+    }, { timezone: TIMEZONE });
     // Daily summary at 23:59
     cron.schedule("59 23 * * *", async () => {
         try {
@@ -74,6 +75,6 @@ export const initializeReportSchedulers = () => {
         catch (error) {
             console.error("Gün sonu rapor gönderimi başarısız:", error);
         }
-    });
+    }, { timezone: TIMEZONE });
 };
 //# sourceMappingURL=report.scheduler.js.map

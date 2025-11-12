@@ -1,29 +1,41 @@
 import { Prisma } from "@prisma/client";
+interface Actor {
+    id: string;
+    email: string;
+    fullName: string;
+}
+interface AttachmentInput {
+    path: string;
+    filename: string;
+    mimeType: string;
+    size: number;
+}
 export declare class CheckService {
     static registerIn(payload: {
+        actor: Actor;
         serialNo: string;
         bank: string;
         amount: number;
         dueDate: string;
         customerId: string;
         notes?: string;
-        createdById: string;
-        attachment?: Express.Multer.File;
+        attachments: AttachmentInput[];
     }): Promise<void>;
     static registerOut(payload: {
+        actor: Actor;
         checkId: string;
         supplierId: string;
         notes?: string;
-        createdById: string;
     }): Promise<void>;
     static issueCompanyCheck(payload: {
+        actor: Actor;
         serialNo: string;
         bank: string;
         amount: number;
         dueDate: string;
         notes?: string;
-        createdById: string;
-        attachment?: Express.Multer.File;
+        attachments: AttachmentInput[];
+        issuerName?: string;
     }): Promise<void>;
     static listAll(): Promise<({
         contact: {
@@ -31,11 +43,11 @@ export declare class CheckService {
             id: string;
             name: string;
         } | null;
-        attachment: {
+        attachments: {
             id: string;
             path: string;
             filename: string;
-        } | null;
+        }[];
         moves: ({
             performedBy: {
                 id: string;
@@ -61,16 +73,16 @@ export declare class CheckService {
         serialNo: string;
         bank: string;
         dueDate: Date;
-        attachmentId: string | null;
         issuedBy: string | null;
     })[]>;
     static payCheck(payload: {
+        actor: Actor;
         checkId: string;
         bankAccountId: string;
         amount: number;
         txnDate: string;
         notes?: string;
-        createdById: string;
     }): Promise<void>;
 }
+export {};
 //# sourceMappingURL=check.service.d.ts.map

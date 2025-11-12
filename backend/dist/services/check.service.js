@@ -1,41 +1,48 @@
-import { CheckMoveAction, CheckStatus, ContactType, Prisma, TransactionCategory, TransactionType, } from "@prisma/client";
+import { CheckMoveAction, CheckStatus, ContactType, Prisma, TransactionCategory, } from "@prisma/client";
+import { fromZonedTime } from "date-fns-tz";
 import { prisma } from "../lib/prisma.js";
 import { HttpError } from "../middlewares/error-handler.js";
 import { TransactionService } from "./transaction.service.js";
+const TIMEZONE = "Europe/Istanbul";
 const toDecimal = (amount) => new Prisma.Decimal(typeof amount === "number" ? amount.toFixed(2) : amount);
 const parseDueDate = (value) => {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
+    const trimmed = value.trim();
+    const parsed = fromZonedTime(`${trimmed}T00:00:00`, TIMEZONE);
+    if (Number.isNaN(parsed.getTime())) {
         throw new HttpError(400, "Geçersiz vade tarihi");
     }
-    return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    return parsed;
 };
-const createAttachment = async (tx, file, userId) => {
-    const attachment = await tx.attachment.create({
-        data: {
-            path: file.path,
-            filename: file.originalname,
-            mimeType: file.mimetype,
+const toRelativePath = (absolutePath) => {
+    const prefix = `${process.cwd()}/`;
+    return absolutePath.startsWith(prefix) ? absolutePath.slice(prefix.length) : absolutePath;
+};
+const createAttachments = async (tx, checkId, files, uploaderId) => {
+    if (!files.length)
+        return;
+    await tx.attachment.createMany({
+        data: files.map((file) => ({
+            path: toRelativePath(file.path),
+            filename: file.filename,
+            mimeType: file.mimeType,
             size: file.size,
-            uploaderId: userId,
-        },
+            uploaderId,
+            checkId,
+        })),
     });
-    return attachment;
 };
 export class CheckService {
     static async registerIn(payload) {
-        if (!payload.attachment) {
+        if (!payload.attachments?.length) {
             throw new HttpError(400, "Çek görseli zorunludur");
         }
         await prisma.$transaction(async (tx) => {
-            const attachmentFile = payload.attachment;
             const contact = await tx.contact.findUnique({
                 where: { id: payload.customerId },
             });
             if (!contact || contact.type !== ContactType.CUSTOMER) {
                 throw new HttpError(400, "Geçersiz müşteri seçimi");
             }
-            const attachment = await createAttachment(tx, attachmentFile, payload.createdById);
             const check = await tx.check.create({
                 data: {
                     serialNo: payload.serialNo,
@@ -45,20 +52,26 @@ export class CheckService {
                     status: CheckStatus.IN_SAFE,
                     contactId: contact.id,
                     notes: payload.notes ?? null,
-                    attachmentId: attachment.id,
                 },
             });
+            await createAttachments(tx, check.id, payload.attachments, payload.actor.id);
             await tx.checkMove.create({
                 data: {
                     checkId: check.id,
                     action: CheckMoveAction.IN,
                     description: payload.notes ?? null,
-                    performedById: payload.createdById,
+                    performedById: payload.actor.id,
                 },
             });
         });
     }
     static async registerOut(payload) {
+        if (!payload.checkId) {
+            throw new HttpError(400, "Devir için çek seçmelisiniz");
+        }
+        if (!payload.supplierId) {
+            throw new HttpError(400, "Devir için tedarikçi seçmelisiniz");
+        }
         await prisma.$transaction(async (tx) => {
             const [check, supplier] = await Promise.all([
                 tx.check.findUnique({ where: { id: payload.checkId } }),
@@ -85,17 +98,16 @@ export class CheckService {
                     checkId: check.id,
                     action: CheckMoveAction.OUT,
                     description: `Tedarikçi: ${supplier.name}`,
-                    performedById: payload.createdById,
+                    performedById: payload.actor.id,
                 },
             });
         });
     }
     static async issueCompanyCheck(payload) {
-        if (!payload.attachment) {
+        if (!payload.attachments?.length) {
             throw new HttpError(400, "Çek görseli zorunludur");
         }
         await prisma.$transaction(async (tx) => {
-            const attachment = await createAttachment(tx, payload.attachment, payload.createdById);
             const check = await tx.check.create({
                 data: {
                     serialNo: payload.serialNo,
@@ -104,16 +116,16 @@ export class CheckService {
                     dueDate: parseDueDate(payload.dueDate),
                     status: CheckStatus.ISSUED,
                     notes: payload.notes ?? null,
-                    attachmentId: attachment.id,
-                    issuedBy: "Esca Food",
+                    issuedBy: payload.issuerName ?? "Esca Food",
                 },
             });
+            await createAttachments(tx, check.id, payload.attachments, payload.actor.id);
             await tx.checkMove.create({
                 data: {
                     checkId: check.id,
                     action: CheckMoveAction.ISSUE,
                     description: payload.notes ?? null,
-                    performedById: payload.createdById,
+                    performedById: payload.actor.id,
                 },
             });
         });
@@ -122,7 +134,7 @@ export class CheckService {
         return prisma.check.findMany({
             include: {
                 contact: { select: { id: true, name: true, type: true } },
-                attachment: { select: { id: true, filename: true, path: true } },
+                attachments: { select: { id: true, filename: true, path: true } },
                 moves: {
                     include: {
                         performedBy: { select: { id: true, fullName: true } },
@@ -145,17 +157,16 @@ export class CheckService {
             throw new HttpError(400, "Çek zaten ödenmiş");
         }
         await TransactionService.registerCheckPayment({
+            actor: payload.actor,
             amount: payload.amount,
             bankAccountId: payload.bankAccountId,
-            createdById: payload.createdById,
             description: payload.notes ?? `Çek ödemesi: ${check.serialNo}`,
             txnDate: payload.txnDate,
             checkId: payload.checkId,
-            category: TransactionCategory.SUPPLIER,
+            category: TransactionCategory.DIGER,
             meta: {
                 checkSerialNo: check.serialNo,
                 checkBank: check.bank,
-                source: TransactionType.CHECK_PAYMENT,
             },
         });
     }

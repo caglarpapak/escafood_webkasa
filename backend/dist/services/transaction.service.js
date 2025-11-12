@@ -1,24 +1,85 @@
-import { Prisma, TransactionDirection, TransactionMethod, TransactionType, TransactionCategory, CheckMoveAction, CheckStatus, } from "@prisma/client";
-import { endOfDay, startOfDay } from "date-fns";
+import { Prisma, TransactionCategory, TransactionDirection, TransactionMethod, TransactionType, CheckMoveAction, CheckStatus, PosProvider, } from "@prisma/client";
+import { endOfDay, format as formatDateFn, startOfDay } from "date-fns";
+import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import { prisma } from "../lib/prisma.js";
 import { HttpError } from "../middlewares/error-handler.js";
 import { generateTransactionNo } from "../utils/ids.js";
+import { NotificationService } from "./notification.service.js";
+const TIMEZONE = "Europe/Istanbul";
 const toDecimal = (value) => new Prisma.Decimal(value.toFixed(2));
 const toDecimalRate = (value) => new Prisma.Decimal(value.toFixed(4));
+const toRelativePath = (absolutePath) => {
+    const prefix = `${process.cwd()}/`;
+    return absolutePath.startsWith(prefix) ? absolutePath.slice(prefix.length) : absolutePath;
+};
 const normalizeDate = (value) => {
-    const reference = value instanceof Date ? value : value ? new Date(value) : new Date();
-    if (Number.isNaN(reference.getTime())) {
+    if (!value) {
+        const zonedNow = toZonedTime(new Date(), TIMEZONE);
+        const dateString = formatDateFn(zonedNow, "yyyy-MM-dd");
+        return fromZonedTime(`${dateString}T00:00:00`, TIMEZONE);
+    }
+    if (value instanceof Date) {
+        if (Number.isNaN(value.getTime())) {
+            throw new HttpError(400, "Geçersiz tarih formatı");
+        }
+        const zoned = toZonedTime(value, TIMEZONE);
+        const dateString = formatDateFn(zoned, "yyyy-MM-dd");
+        return fromZonedTime(`${dateString}T00:00:00`, TIMEZONE);
+    }
+    const trimmed = value.trim();
+    const parsed = fromZonedTime(`${trimmed}T00:00:00`, TIMEZONE);
+    if (Number.isNaN(parsed.getTime())) {
         throw new HttpError(400, "Geçersiz tarih formatı");
     }
-    return new Date(Date.UTC(reference.getFullYear(), reference.getMonth(), reference.getDate()));
+    return parsed;
 };
-const applyTags = async (tx, transactionId, tagIds) => {
-    if (!tagIds?.length)
+const startOfTodayUtc = () => {
+    const zoned = toZonedTime(new Date(), TIMEZONE);
+    const dateString = formatDateFn(zoned, "yyyy-MM-dd");
+    return fromZonedTime(`${dateString}T00:00:00`, TIMEZONE);
+};
+const isBackdated = (txnDate) => txnDate < startOfTodayUtc();
+const ensureTag = async (tx, name) => {
+    const tag = await tx.tag.upsert({
+        where: { name },
+        update: {},
+        create: { name },
+    });
+    return tag.id;
+};
+const applyTags = async (tx, transactionId, tagNames) => {
+    if (!tagNames?.length)
         return;
+    const tagIds = await Promise.all(tagNames.map((name) => ensureTag(tx, name)));
     await tx.txnTag.createMany({
         data: tagIds.map((tagId) => ({ transactionId, tagId })),
         skipDuplicates: true,
     });
+};
+const createAttachments = async (tx, transactionId, files, uploaderId) => {
+    if (!files?.length)
+        return;
+    await tx.attachment.createMany({
+        data: files.map((file) => ({
+            path: toRelativePath(file.path),
+            filename: file.filename,
+            mimeType: file.mimeType,
+            size: file.size,
+            uploaderId,
+            transactionId,
+        })),
+    });
+};
+const mapPosProvider = (provider) => {
+    switch (provider?.toLowerCase()) {
+        case "ykb":
+        case "yapı kredi":
+            return PosProvider.YKB;
+        case "enpara":
+            return PosProvider.ENPARA;
+        default:
+            return provider ? PosProvider.OTHER : null;
+    }
 };
 const createTransaction = async (tx, data) => {
     const txnDate = normalizeDate(data.txnDate);
@@ -33,20 +94,23 @@ const createTransaction = async (tx, data) => {
             txnDate,
             description: data.description ?? null,
             note: data.note ?? null,
+            channelReference: data.meta && "reference" in data.meta ? String(data.meta.reference) : null,
+            category: data.category ?? null,
+            plate: data.plate ?? null,
             bankAccountId: data.bankAccountId ?? null,
             cardId: data.cardId ?? null,
             contactId: data.contactId ?? null,
             checkId: data.checkId ?? null,
-            createdById: data.createdById,
-            category: data.category ?? null,
-            meta: data.meta !== undefined ? data.meta : Prisma.DbNull,
+            createdById: data.actor.id,
+            meta: data.meta ?? Prisma.DbNull,
             posBrut: data.pos?.brut !== undefined ? toDecimal(data.pos.brut) : null,
             posKomisyon: data.pos?.komisyon !== undefined ? toDecimal(data.pos.komisyon) : null,
             posNet: data.pos?.net !== undefined ? toDecimal(data.pos.net) : null,
             posEffectiveRate: data.pos?.effectiveRate !== undefined ? toDecimalRate(data.pos.effectiveRate) : null,
+            posProvider: data.pos?.provider ?? null,
         },
     });
-    await applyTags(tx, transaction.id, data.tagIds);
+    await applyTags(tx, transaction.id, data.tagNames);
     return transaction;
 };
 async function ensureBankAccount(tx, id) {
@@ -77,145 +141,225 @@ async function ensureCheck(tx, id) {
     }
     return check;
 }
+const notifyBackdatedIfNeeded = async (transaction, actor) => {
+    if (isBackdated(transaction.txnDate)) {
+        await NotificationService.sendBackdatedTransaction({
+            txnNo: transaction.txnNo,
+            amount: Number(transaction.amount),
+            description: transaction.description ?? transaction.note,
+            txnDate: transaction.txnDate,
+            performedAt: new Date(),
+            actor,
+        });
+    }
+};
 export class TransactionService {
     static async cashIn(payload) {
-        await prisma.$transaction(async (tx) => {
+        const { actor } = payload;
+        const result = await prisma.$transaction(async (tx) => {
             if (payload.contactId) {
                 await ensureContact(tx, payload.contactId, "Müşteri bulunamadı");
             }
-            await createTransaction(tx, {
+            const transaction = await createTransaction(tx, {
                 ...payload,
+                actor,
                 method: TransactionMethod.CASH,
                 type: TransactionType.CASH_IN,
                 direction: TransactionDirection.INFLOW,
             });
+            return transaction;
         });
+        await notifyBackdatedIfNeeded(result, actor);
+        return result;
     }
     static async cashOut(payload) {
-        await prisma.$transaction(async (tx) => {
+        const { actor } = payload;
+        const result = await prisma.$transaction(async (tx) => {
             if (payload.contactId) {
                 await ensureContact(tx, payload.contactId, "Tedarikçi bulunamadı");
             }
-            await createTransaction(tx, {
+            const transaction = await createTransaction(tx, {
                 ...payload,
+                actor,
                 method: TransactionMethod.CASH,
                 type: TransactionType.CASH_OUT,
                 direction: TransactionDirection.OUTFLOW,
             });
+            return transaction;
         });
+        await notifyBackdatedIfNeeded(result, actor);
+        return result;
     }
     static async bankIn(payload) {
-        await prisma.$transaction(async (tx) => {
+        const { actor } = payload;
+        const result = await prisma.$transaction(async (tx) => {
             await ensureBankAccount(tx, payload.bankAccountId);
             if (payload.contactId) {
                 await ensureContact(tx, payload.contactId, "Müşteri bulunamadı");
             }
-            await createTransaction(tx, {
+            const transaction = await createTransaction(tx, {
                 ...payload,
+                actor,
                 method: TransactionMethod.BANK,
                 type: TransactionType.BANK_IN,
                 direction: TransactionDirection.INFLOW,
             });
+            return transaction;
         });
+        await notifyBackdatedIfNeeded(result, actor);
+        return result;
     }
     static async bankOut(payload) {
-        await prisma.$transaction(async (tx) => {
+        const { actor } = payload;
+        const result = await prisma.$transaction(async (tx) => {
             await ensureBankAccount(tx, payload.bankAccountId);
             if (payload.contactId) {
                 await ensureContact(tx, payload.contactId, "Tedarikçi bulunamadı");
             }
-            await createTransaction(tx, {
+            const transaction = await createTransaction(tx, {
                 ...payload,
+                actor,
                 method: TransactionMethod.BANK,
                 type: TransactionType.BANK_OUT,
                 direction: TransactionDirection.OUTFLOW,
             });
+            return transaction;
         });
+        await notifyBackdatedIfNeeded(result, actor);
+        return result;
     }
     static async posCollection(payload) {
-        const posNet = payload.posBrut - payload.posKomisyon;
-        const effectiveRate = payload.posBrut === 0 ? 0 : Number((payload.posKomisyon / payload.posBrut).toFixed(4));
-        await prisma.$transaction(async (tx) => {
-            const bankAccount = await ensureBankAccount(tx, payload.bankAccountId);
-            await createTransaction(tx, {
-                ...payload,
-                amount: posNet,
+        const { actor, mode, net: netValue, brut: brutValue, komisyon, provider, ...basePayload } = payload;
+        const result = await prisma.$transaction(async (tx) => {
+            const bankAccount = await ensureBankAccount(tx, basePayload.bankAccountId);
+            let brut;
+            let net;
+            if (mode === "net_komisyon") {
+                if (netValue === undefined) {
+                    throw new HttpError(400, "Net tutar zorunludur");
+                }
+                net = netValue;
+                brut = net + komisyon;
+            }
+            else {
+                if (brutValue === undefined) {
+                    throw new HttpError(400, "Brüt tutar zorunludur");
+                }
+                brut = brutValue;
+                net = brut - komisyon;
+            }
+            if (brut <= 0 || net < 0) {
+                throw new HttpError(400, "POS tutarları geçersiz");
+            }
+            const effectiveRate = brut === 0 ? 0 : Number((komisyon / brut).toFixed(4));
+            const posProvider = mapPosProvider(provider);
+            const collection = await createTransaction(tx, {
+                ...basePayload,
+                actor,
+                amount: net,
                 method: TransactionMethod.BANK,
                 type: TransactionType.POS_COLLECTION,
                 direction: TransactionDirection.INFLOW,
+                tagNames: [...new Set([...(basePayload.tagNames ?? []), "POS"])],
                 pos: {
-                    brut: payload.posBrut,
-                    komisyon: payload.posKomisyon,
-                    net: posNet,
+                    brut,
+                    komisyon,
+                    net,
                     effectiveRate,
+                    provider: posProvider,
                 },
-                description: payload.description ??
-                    `${bankAccount.name} POS tahsilatı (brüt ${payload.posBrut.toFixed(2)} TL)`,
+                description: basePayload.description ??
+                    `${bankAccount.name} POS tahsilatı (brüt ${brut.toFixed(2)} TL)`,
             });
             await createTransaction(tx, {
-                ...payload,
-                amount: payload.posKomisyon,
+                ...basePayload,
+                actor,
+                amount: komisyon,
                 method: TransactionMethod.BANK,
                 type: TransactionType.POS_COMMISSION,
                 direction: TransactionDirection.OUTFLOW,
+                tagNames: [...new Set([...(basePayload.tagNames ?? []), "POS Komisyonu"])],
                 pos: {
-                    brut: payload.posBrut,
-                    komisyon: payload.posKomisyon,
-                    net: posNet,
+                    brut,
+                    komisyon,
+                    net,
                     effectiveRate,
+                    provider: posProvider,
                 },
-                description: payload.description ??
+                description: basePayload.description ??
                     `${bankAccount.name} POS komisyonu (${(effectiveRate * 100).toFixed(2)}%)`,
             });
+            return collection;
         });
+        await notifyBackdatedIfNeeded(result, actor);
+        return result;
     }
     static async cardExpense(payload) {
-        await prisma.$transaction(async (tx) => {
-            const card = await ensureCard(tx, payload.cardId);
-            await createTransaction(tx, {
-                ...payload,
+        const { actor, attachments, ...basePayload } = payload;
+        if (!attachments?.length) {
+            throw new HttpError(400, "Kart masrafı için slip fotoğrafı zorunludur");
+        }
+        const result = await prisma.$transaction(async (tx) => {
+            const card = await ensureCard(tx, basePayload.cardId);
+            const { tagNames, ...restPayload } = basePayload;
+            const transaction = await createTransaction(tx, {
+                ...restPayload,
+                ...(tagNames ? { tagNames } : {}),
+                actor,
                 method: TransactionMethod.CARD,
                 type: TransactionType.CARD_EXPENSE,
                 direction: TransactionDirection.OUTFLOW,
             });
+            await createAttachments(tx, transaction.id, attachments, actor.id);
             await tx.card.update({
                 where: { id: card.id },
                 data: {
-                    currentRisk: card.currentRisk.plus(toDecimal(payload.amount)),
+                    riskTry: card.riskTry.plus(toDecimal(basePayload.amount)),
                 },
             });
+            return transaction;
         });
+        await notifyBackdatedIfNeeded(result, actor);
+        return result;
     }
     static async cardPayment(payload) {
-        await prisma.$transaction(async (tx) => {
-            const card = await ensureCard(tx, payload.cardId);
-            if (payload.bankAccountId) {
-                await ensureBankAccount(tx, payload.bankAccountId);
+        const { actor, ...basePayload } = payload;
+        const result = await prisma.$transaction(async (tx) => {
+            const card = await ensureCard(tx, basePayload.cardId);
+            if (basePayload.bankAccountId) {
+                await ensureBankAccount(tx, basePayload.bankAccountId);
             }
-            await createTransaction(tx, {
-                ...payload,
-                method: payload.bankAccountId ? TransactionMethod.BANK : TransactionMethod.CARD,
+            const transaction = await createTransaction(tx, {
+                ...basePayload,
+                actor,
+                method: basePayload.bankAccountId ? TransactionMethod.BANK : TransactionMethod.CARD,
                 type: TransactionType.CARD_PAYMENT,
                 direction: TransactionDirection.OUTFLOW,
             });
-            const updatedRisk = card.currentRisk.minus(toDecimal(payload.amount));
+            const updatedRisk = card.riskTry.minus(toDecimal(basePayload.amount));
             await tx.card.update({
                 where: { id: card.id },
                 data: {
-                    currentRisk: updatedRisk.lessThan(0) ? new Prisma.Decimal(0) : updatedRisk,
+                    riskTry: updatedRisk.lessThan(0) ? new Prisma.Decimal(0) : updatedRisk,
                 },
             });
+            return transaction;
         });
+        await notifyBackdatedIfNeeded(result, actor);
+        return result;
     }
     static async registerCheckPayment(payload) {
-        await prisma.$transaction(async (tx) => {
-            const check = await ensureCheck(tx, payload.checkId);
+        const { actor, ...basePayload } = payload;
+        const result = await prisma.$transaction(async (tx) => {
+            const check = await ensureCheck(tx, basePayload.checkId);
             if (check.status === CheckStatus.PAID) {
                 throw new HttpError(400, "Çek zaten ödenmiş");
             }
-            await ensureBankAccount(tx, payload.bankAccountId);
+            await ensureBankAccount(tx, basePayload.bankAccountId);
             const transaction = await createTransaction(tx, {
-                ...payload,
+                ...basePayload,
+                actor,
+                category: basePayload.category ?? TransactionCategory.DIGER,
                 method: TransactionMethod.BANK,
                 type: TransactionType.CHECK_PAYMENT,
                 direction: TransactionDirection.OUTFLOW,
@@ -229,13 +373,16 @@ export class TransactionService {
                     checkId: check.id,
                     action: CheckMoveAction.PAYMENT,
                     transactionId: transaction.id,
-                    description: payload.description ?? null,
-                    performedById: payload.createdById,
+                    description: basePayload.description ?? null,
+                    performedById: actor.id,
                 },
             });
+            return transaction;
         });
+        await notifyBackdatedIfNeeded(result, actor);
+        return result;
     }
-    static async deleteTransaction(id) {
+    static async deleteTransaction(id, actor) {
         const transaction = await prisma.transaction.findUnique({
             where: { id },
         });
@@ -244,28 +391,37 @@ export class TransactionService {
         }
         await prisma.$transaction(async (tx) => {
             await tx.txnTag.deleteMany({ where: { transactionId: id } });
+            await tx.attachment.deleteMany({ where: { transactionId: id } });
             if (transaction.cardId) {
                 const card = await tx.card.findUnique({ where: { id: transaction.cardId } });
                 if (card) {
                     if (transaction.type === TransactionType.CARD_EXPENSE) {
-                        const updatedRisk = card.currentRisk.minus(transaction.amount);
+                        const updatedRisk = card.riskTry.minus(transaction.amount);
                         await tx.card.update({
                             where: { id: card.id },
                             data: {
-                                currentRisk: updatedRisk.lessThan(0) ? new Prisma.Decimal(0) : updatedRisk,
+                                riskTry: updatedRisk.lessThan(0) ? new Prisma.Decimal(0) : updatedRisk,
                             },
                         });
                     }
                     if (transaction.type === TransactionType.CARD_PAYMENT) {
-                        const updatedRisk = card.currentRisk.plus(transaction.amount);
+                        const updatedRisk = card.riskTry.plus(transaction.amount);
                         await tx.card.update({
                             where: { id: card.id },
-                            data: { currentRisk: updatedRisk },
+                            data: { riskTry: updatedRisk },
                         });
                     }
                 }
             }
             await tx.transaction.delete({ where: { id } });
+        });
+        await NotificationService.sendHardDelete({
+            txnNo: transaction.txnNo,
+            amount: Number(transaction.amount),
+            description: transaction.description ?? transaction.note,
+            txnDate: transaction.txnDate,
+            performedAt: new Date(),
+            actor,
         });
     }
     static async getDailyLedger(params) {

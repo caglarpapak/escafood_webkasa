@@ -1,7 +1,9 @@
 import { CheckStatus, ContactType, TransactionDirection, TransactionMethod } from "@prisma/client";
-import { endOfDay, startOfDay } from "date-fns";
+import { endOfDay, format, startOfDay } from "date-fns";
+import { toZonedTime } from "date-fns-tz";
 import { prisma } from "../lib/prisma.js";
 import { decimalToNumber } from "../utils/decimal.js";
+const TIMEZONE = "Europe/Istanbul";
 export class DashboardService {
     static async getOverview(date = new Date()) {
         const dayStart = startOfDay(date);
@@ -82,30 +84,41 @@ export class DashboardService {
                     select: { name: true },
                 },
             },
-            orderBy: {
-                createdAt: "desc",
-            },
+            orderBy: [
+                { txnDate: "asc" },
+                { createdAt: "asc" },
+            ],
         });
-        const dayRows = dailyTransactions.map((txn) => ({
-            id: txn.id,
-            txnDate: txn.txnDate,
-            type: txn.type,
-            method: txn.method,
-            description: txn.description ?? txn.note ?? "",
-            contactName: txn.contact?.name,
-            bankAccountName: txn.bankAccount?.name,
-            cardName: txn.card?.name,
-            inflow: txn.direction === TransactionDirection.INFLOW ? decimalToNumber(txn.amount) : 0,
-            outflow: txn.direction === TransactionDirection.OUTFLOW ? decimalToNumber(txn.amount) : 0,
-        }));
+        let runningBalance = 0;
+        const todayTable = dailyTransactions.map((txn) => {
+            const inflow = txn.direction === TransactionDirection.INFLOW ? decimalToNumber(txn.amount) : 0;
+            const outflow = txn.direction === TransactionDirection.OUTFLOW ? decimalToNumber(txn.amount) : 0;
+            runningBalance += inflow - outflow;
+            return {
+                id: txn.id,
+                date: format(toZonedTime(txn.txnDate, TIMEZONE), "dd/MM/yyyy"),
+                docNo: txn.txnNo,
+                type: txn.type,
+                method: txn.method,
+                source: txn.bankAccount?.name ?? txn.card?.name ?? "-",
+                contact: txn.contact?.name ?? "-",
+                desc: txn.description ?? txn.note ?? "",
+                in: inflow,
+                out: outflow,
+                balance: runningBalance,
+            };
+        });
         return {
-            bankBalances,
-            cashBalance: cashIn - cashOut,
-            checksInSafe: {
-                count: checks._count.id ?? 0,
-                total: decimalToNumber(checks._sum.amount),
+            date: format(toZonedTime(dayStart, TIMEZONE), "yyyy-MM-dd"),
+            balances: {
+                cash: cashIn - cashOut,
+                banks: bankBalances,
+                checks: {
+                    count: checks._count.id ?? 0,
+                    total: decimalToNumber(checks._sum.amount),
+                },
             },
-            dailyMovements: dayRows,
+            todayTable,
         };
     }
 }

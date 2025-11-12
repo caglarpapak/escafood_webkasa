@@ -1,8 +1,5 @@
 import argon2 from "argon2";
-import {
-  ContactType,
-  PrismaClient,
-} from "@prisma/client";
+import { ContactType, PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -21,12 +18,17 @@ const adminUsers = [
 
 const bankAccounts = [
   {
-    name: "Yapı Kredi",
+    name: "Yapı Kredi Hesap",
     iban: "TR000000000000000000000000",
     initialBalance: 0,
   },
   {
-    name: "Halkbank",
+    name: "Enpara Hesap",
+    iban: "TR222222222222222222222222",
+    initialBalance: 0,
+  },
+  {
+    name: "Halkbank Hesap",
     iban: "TR111111111111111111111111",
     initialBalance: 0,
   },
@@ -35,11 +37,33 @@ const bankAccounts = [
 const cards = [
   {
     name: "YKB Ticari Kart",
-    limit: 250000,
+    limitTry: 250000,
+    type: "credit",
+    scheme: "Visa",
   },
   {
-    name: "Halkbank POS",
-    limit: 150000,
+    name: "Enpara Ticari Kart",
+    limitTry: 175000,
+    type: "credit",
+    scheme: "Mastercard",
+  },
+  {
+    name: "Halkbank Ticari Kart",
+    limitTry: 150000,
+    type: "credit",
+    scheme: "Troy",
+  },
+  {
+    name: "YKB POS",
+    limitTry: 0,
+    type: "pos",
+    linkedBank: "Yapı Kredi Hesap",
+  },
+  {
+    name: "Enpara POS",
+    limitTry: 0,
+    type: "pos",
+    linkedBank: "Enpara Hesap",
   },
 ];
 
@@ -51,6 +75,10 @@ const contacts = [
   {
     name: "Esca Tedarikçi",
     type: ContactType.SUPPLIER,
+  },
+  {
+    name: "Muhtelif",
+    type: ContactType.OTHER,
   },
 ];
 
@@ -83,21 +111,26 @@ async function seedBanks() {
 }
 
 async function seedCards() {
-  const [primaryBank] = await prisma.bankAccount.findMany({
-    orderBy: { createdAt: "asc" },
+  const existingBanks = await prisma.bankAccount.findMany({
+    select: { id: true, name: true },
   });
+  const bankMap = new Map(existingBanks.map((bank) => [bank.name, bank.id]));
 
   for (const card of cards) {
     await prisma.card.upsert({
       where: { name: card.name },
       update: {
-        limit: card.limit,
-        bankAccountId: primaryBank?.id,
+        limitTry: card.limitTry,
+        type: card.type,
+        scheme: card.scheme,
+        bankAccountId: card.linkedBank ? bankMap.get(card.linkedBank) ?? null : null,
       },
       create: {
         name: card.name,
-        limit: card.limit,
-        bankAccountId: primaryBank?.id,
+        limitTry: card.limitTry,
+        type: card.type,
+        scheme: card.scheme,
+        bankAccountId: card.linkedBank ? bankMap.get(card.linkedBank) ?? null : null,
       },
     });
   }
@@ -113,11 +146,23 @@ async function seedContacts() {
   }
 }
 
+async function seedTags() {
+  const tags = ["POS", "POS Komisyonu"];
+  for (const tag of tags) {
+    await prisma.tag.upsert({
+      where: { name: tag },
+      update: {},
+      create: { name: tag },
+    });
+  }
+}
+
 async function main() {
   await seedUsers();
   await seedBanks();
   await seedCards();
   await seedContacts();
+  await seedTags();
 }
 
 main()

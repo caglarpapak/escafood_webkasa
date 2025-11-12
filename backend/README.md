@@ -54,3 +54,9 @@ E-postalar `muhasebe@esca-food.com` adresine yönlendirilir. SMTP bilgileri `.en
 - `npm run build` – TypeScript derlemesi
 - `npm run prisma:studio` – Prisma Studio arayüzü
 - `npm run prisma:migrate` – Migration komutu kısayolu
+
+### İçe Aktarım (Kontaklar)
+
+- `POST /api/v1/contacts/import` endpoint'i ile `MusteriTedarikci_Sablon.xlsx` dosyasını `file` alanı olarak yükleyin.
+- Kolonlar: Adı*, Tür*, VergiNo, E-posta, Telefon, Ülke, Şehir, Adres.
+- Tür alanı `musteri`, `tedarikci` veya `diger` değerlerini alır.

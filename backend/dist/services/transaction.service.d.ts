@@ -1,5 +1,17 @@
-import { Prisma, TransactionCategory } from "@prisma/client";
+import { Prisma, TransactionCategory, PosProvider } from "@prisma/client";
+interface Actor {
+    id: string;
+    email: string;
+    fullName: string;
+}
+interface AttachmentInput {
+    path: string;
+    filename: string;
+    mimeType: string;
+    size: number;
+}
 interface BaseTransactionInput {
+    actor: Actor;
     amount: number;
     txnDate?: string | Date;
     description?: string;
@@ -10,43 +22,264 @@ interface BaseTransactionInput {
     checkId?: string | null;
     category?: TransactionCategory | null;
     meta?: Prisma.InputJsonValue;
-    tagIds?: string[];
-    createdById: string;
+    tagNames?: string[];
+    plate?: string | null;
+    posProvider?: PosProvider | null;
 }
 interface PosInput extends BaseTransactionInput {
     bankAccountId: string;
-    posBrut: number;
-    posKomisyon: number;
-    effectiveRate?: number;
+    mode: "net_komisyon" | "brut_komisyon";
+    net?: number;
+    brut?: number;
+    komisyon: number;
+    provider?: "ykb" | "enpara" | "other";
+}
+interface CardExpenseInput extends BaseTransactionInput {
+    cardId: string;
+    category: TransactionCategory;
+    attachments: AttachmentInput[];
 }
 export declare class TransactionService {
     static cashIn(payload: BaseTransactionInput & {
-        contactId?: string;
-    }): Promise<void>;
+        contactId?: string | null;
+    }): Promise<{
+        type: import(".prisma/client").$Enums.TransactionType;
+        meta: Prisma.JsonValue | null;
+        id: string;
+        createdAt: Date;
+        updatedAt: Date;
+        description: string | null;
+        currency: string;
+        txnNo: string;
+        method: import(".prisma/client").$Enums.TransactionMethod;
+        direction: import(".prisma/client").$Enums.TransactionDirection;
+        amount: Prisma.Decimal;
+        txnDate: Date;
+        note: string | null;
+        channelReference: string | null;
+        category: import(".prisma/client").$Enums.TransactionCategory | null;
+        plate: string | null;
+        bankAccountId: string | null;
+        cardId: string | null;
+        contactId: string | null;
+        checkId: string | null;
+        createdById: string;
+        posBrut: Prisma.Decimal | null;
+        posKomisyon: Prisma.Decimal | null;
+        posNet: Prisma.Decimal | null;
+        posEffectiveRate: Prisma.Decimal | null;
+        posProvider: import(".prisma/client").$Enums.PosProvider | null;
+    }>;
     static cashOut(payload: BaseTransactionInput & {
         category: TransactionCategory;
-    }): Promise<void>;
+    }): Promise<{
+        type: import(".prisma/client").$Enums.TransactionType;
+        meta: Prisma.JsonValue | null;
+        id: string;
+        createdAt: Date;
+        updatedAt: Date;
+        description: string | null;
+        currency: string;
+        txnNo: string;
+        method: import(".prisma/client").$Enums.TransactionMethod;
+        direction: import(".prisma/client").$Enums.TransactionDirection;
+        amount: Prisma.Decimal;
+        txnDate: Date;
+        note: string | null;
+        channelReference: string | null;
+        category: import(".prisma/client").$Enums.TransactionCategory | null;
+        plate: string | null;
+        bankAccountId: string | null;
+        cardId: string | null;
+        contactId: string | null;
+        checkId: string | null;
+        createdById: string;
+        posBrut: Prisma.Decimal | null;
+        posKomisyon: Prisma.Decimal | null;
+        posNet: Prisma.Decimal | null;
+        posEffectiveRate: Prisma.Decimal | null;
+        posProvider: import(".prisma/client").$Enums.PosProvider | null;
+    }>;
     static bankIn(payload: BaseTransactionInput & {
         bankAccountId: string;
-    }): Promise<void>;
+    }): Promise<{
+        type: import(".prisma/client").$Enums.TransactionType;
+        meta: Prisma.JsonValue | null;
+        id: string;
+        createdAt: Date;
+        updatedAt: Date;
+        description: string | null;
+        currency: string;
+        txnNo: string;
+        method: import(".prisma/client").$Enums.TransactionMethod;
+        direction: import(".prisma/client").$Enums.TransactionDirection;
+        amount: Prisma.Decimal;
+        txnDate: Date;
+        note: string | null;
+        channelReference: string | null;
+        category: import(".prisma/client").$Enums.TransactionCategory | null;
+        plate: string | null;
+        bankAccountId: string | null;
+        cardId: string | null;
+        contactId: string | null;
+        checkId: string | null;
+        createdById: string;
+        posBrut: Prisma.Decimal | null;
+        posKomisyon: Prisma.Decimal | null;
+        posNet: Prisma.Decimal | null;
+        posEffectiveRate: Prisma.Decimal | null;
+        posProvider: import(".prisma/client").$Enums.PosProvider | null;
+    }>;
     static bankOut(payload: BaseTransactionInput & {
         bankAccountId: string;
         category: TransactionCategory;
-    }): Promise<void>;
-    static posCollection(payload: PosInput): Promise<void>;
-    static cardExpense(payload: BaseTransactionInput & {
-        cardId: string;
-        category: TransactionCategory;
-    }): Promise<void>;
+    }): Promise<{
+        type: import(".prisma/client").$Enums.TransactionType;
+        meta: Prisma.JsonValue | null;
+        id: string;
+        createdAt: Date;
+        updatedAt: Date;
+        description: string | null;
+        currency: string;
+        txnNo: string;
+        method: import(".prisma/client").$Enums.TransactionMethod;
+        direction: import(".prisma/client").$Enums.TransactionDirection;
+        amount: Prisma.Decimal;
+        txnDate: Date;
+        note: string | null;
+        channelReference: string | null;
+        category: import(".prisma/client").$Enums.TransactionCategory | null;
+        plate: string | null;
+        bankAccountId: string | null;
+        cardId: string | null;
+        contactId: string | null;
+        checkId: string | null;
+        createdById: string;
+        posBrut: Prisma.Decimal | null;
+        posKomisyon: Prisma.Decimal | null;
+        posNet: Prisma.Decimal | null;
+        posEffectiveRate: Prisma.Decimal | null;
+        posProvider: import(".prisma/client").$Enums.PosProvider | null;
+    }>;
+    static posCollection(payload: PosInput): Promise<{
+        type: import(".prisma/client").$Enums.TransactionType;
+        meta: Prisma.JsonValue | null;
+        id: string;
+        createdAt: Date;
+        updatedAt: Date;
+        description: string | null;
+        currency: string;
+        txnNo: string;
+        method: import(".prisma/client").$Enums.TransactionMethod;
+        direction: import(".prisma/client").$Enums.TransactionDirection;
+        amount: Prisma.Decimal;
+        txnDate: Date;
+        note: string | null;
+        channelReference: string | null;
+        category: import(".prisma/client").$Enums.TransactionCategory | null;
+        plate: string | null;
+        bankAccountId: string | null;
+        cardId: string | null;
+        contactId: string | null;
+        checkId: string | null;
+        createdById: string;
+        posBrut: Prisma.Decimal | null;
+        posKomisyon: Prisma.Decimal | null;
+        posNet: Prisma.Decimal | null;
+        posEffectiveRate: Prisma.Decimal | null;
+        posProvider: import(".prisma/client").$Enums.PosProvider | null;
+    }>;
+    static cardExpense(payload: CardExpenseInput): Promise<{
+        type: import(".prisma/client").$Enums.TransactionType;
+        meta: Prisma.JsonValue | null;
+        id: string;
+        createdAt: Date;
+        updatedAt: Date;
+        description: string | null;
+        currency: string;
+        txnNo: string;
+        method: import(".prisma/client").$Enums.TransactionMethod;
+        direction: import(".prisma/client").$Enums.TransactionDirection;
+        amount: Prisma.Decimal;
+        txnDate: Date;
+        note: string | null;
+        channelReference: string | null;
+        category: import(".prisma/client").$Enums.TransactionCategory | null;
+        plate: string | null;
+        bankAccountId: string | null;
+        cardId: string | null;
+        contactId: string | null;
+        checkId: string | null;
+        createdById: string;
+        posBrut: Prisma.Decimal | null;
+        posKomisyon: Prisma.Decimal | null;
+        posNet: Prisma.Decimal | null;
+        posEffectiveRate: Prisma.Decimal | null;
+        posProvider: import(".prisma/client").$Enums.PosProvider | null;
+    }>;
     static cardPayment(payload: BaseTransactionInput & {
         cardId: string;
-        bankAccountId?: string;
-    }): Promise<void>;
+        bankAccountId?: string | null;
+    }): Promise<{
+        type: import(".prisma/client").$Enums.TransactionType;
+        meta: Prisma.JsonValue | null;
+        id: string;
+        createdAt: Date;
+        updatedAt: Date;
+        description: string | null;
+        currency: string;
+        txnNo: string;
+        method: import(".prisma/client").$Enums.TransactionMethod;
+        direction: import(".prisma/client").$Enums.TransactionDirection;
+        amount: Prisma.Decimal;
+        txnDate: Date;
+        note: string | null;
+        channelReference: string | null;
+        category: import(".prisma/client").$Enums.TransactionCategory | null;
+        plate: string | null;
+        bankAccountId: string | null;
+        cardId: string | null;
+        contactId: string | null;
+        checkId: string | null;
+        createdById: string;
+        posBrut: Prisma.Decimal | null;
+        posKomisyon: Prisma.Decimal | null;
+        posNet: Prisma.Decimal | null;
+        posEffectiveRate: Prisma.Decimal | null;
+        posProvider: import(".prisma/client").$Enums.PosProvider | null;
+    }>;
     static registerCheckPayment(payload: BaseTransactionInput & {
         checkId: string;
         bankAccountId: string;
-    }): Promise<void>;
-    static deleteTransaction(id: string): Promise<void>;
+    }): Promise<{
+        type: import(".prisma/client").$Enums.TransactionType;
+        meta: Prisma.JsonValue | null;
+        id: string;
+        createdAt: Date;
+        updatedAt: Date;
+        description: string | null;
+        currency: string;
+        txnNo: string;
+        method: import(".prisma/client").$Enums.TransactionMethod;
+        direction: import(".prisma/client").$Enums.TransactionDirection;
+        amount: Prisma.Decimal;
+        txnDate: Date;
+        note: string | null;
+        channelReference: string | null;
+        category: import(".prisma/client").$Enums.TransactionCategory | null;
+        plate: string | null;
+        bankAccountId: string | null;
+        cardId: string | null;
+        contactId: string | null;
+        checkId: string | null;
+        createdById: string;
+        posBrut: Prisma.Decimal | null;
+        posKomisyon: Prisma.Decimal | null;
+        posNet: Prisma.Decimal | null;
+        posEffectiveRate: Prisma.Decimal | null;
+        posProvider: import(".prisma/client").$Enums.PosProvider | null;
+    }>;
+    static deleteTransaction(id: string, actor: Actor): Promise<void>;
     static getDailyLedger(params: {
         startDate?: string;
         endDate?: string;
@@ -88,6 +321,7 @@ export declare class TransactionService {
             note: string | null;
             channelReference: string | null;
             category: import(".prisma/client").$Enums.TransactionCategory | null;
+            plate: string | null;
             bankAccountId: string | null;
             cardId: string | null;
             contactId: string | null;
@@ -97,6 +331,7 @@ export declare class TransactionService {
             posKomisyon: Prisma.Decimal | null;
             posNet: Prisma.Decimal | null;
             posEffectiveRate: Prisma.Decimal | null;
+            posProvider: import(".prisma/client").$Enums.PosProvider | null;
         })[];
         range: {
             start: Date;

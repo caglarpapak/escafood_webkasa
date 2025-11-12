@@ -1,27 +1,31 @@
 export declare class DashboardService {
     static getOverview(date?: Date): Promise<{
-        bankBalances: {
-            id: string;
-            name: string;
-            currency: string;
-            balance: number;
-        }[];
-        cashBalance: number;
-        checksInSafe: {
-            count: number;
-            total: number;
+        date: string;
+        balances: {
+            cash: number;
+            banks: {
+                id: string;
+                name: string;
+                currency: string;
+                balance: number;
+            }[];
+            checks: {
+                count: number;
+                total: number;
+            };
         };
-        dailyMovements: {
+        todayTable: {
             id: string;
-            txnDate: Date;
+            date: string;
+            docNo: string;
             type: import(".prisma/client").$Enums.TransactionType;
             method: import(".prisma/client").$Enums.TransactionMethod;
-            description: string;
-            contactName: string | undefined;
-            bankAccountName: string | undefined;
-            cardName: string | undefined;
-            inflow: number;
-            outflow: number;
+            source: string;
+            contact: string;
+            desc: string;
+            in: number;
+            out: number;
+            balance: number;
         }[];
     }>;
 }

@@ -46,20 +46,16 @@ enum TransactionType {
 }
 
 enum TransactionCategory {
-  CUSTOMER
-  SUPPLIER
-  SALARY
-  EXPENSE
-  CREDIT_CARD_PAYMENT
-  TAX
-  SOCIAL_SECURITY
-  FUEL
-  FOOD
-  MAINTENANCE
-  REPRESENTATION
-  COMMISSION
-  TRANSFER
-  OTHER
+  MAAS
+  MASRAF
+  KK_ODEME
+  YAKIT
+  GIDA
+  BAKIM_ONARIM
+  TEMSIL
+  VERGI
+  SGK
+  DIGER
 }
 
 enum CheckStatus {
@@ -104,14 +100,22 @@ model BankAccount {
   cards        Card[]
 }
 
+enum PosProvider {
+  YKB
+  ENPARA
+  OTHER
+}
+
 model Card {
   id            String   @id @default(uuid())
   name          String   @unique
   bankAccountId String?
-  limit         Decimal  @default("0") @db.Decimal(18, 2)
-  currentRisk   Decimal  @default("0") @db.Decimal(18, 2)
-  statementDay  Int?
-  dueDay        Int?
+  limitTry      Decimal  @default("0") @map("limit_try") @db.Decimal(18, 2)
+  riskTry       Decimal  @default("0") @map("risk_try") @db.Decimal(18, 2)
+  statementDay  Int?     @map("statement_day")
+  dueDay        Int?     @map("due_day")
+  scheme        String?
+  type          String?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime @updatedAt @db.Timestamptz(6)
@@ -140,16 +144,19 @@ model Contact {
 }
 
 model Attachment {
-  id         String   @id @default(uuid())
-  path       String
-  filename   String
-  mimeType   String
-  size       Int
-  uploaderId String?
-  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  id            String   @id @default(uuid())
+  path          String
+  filename      String
+  mimeType      String
+  size          Int
+  uploaderId    String?
+  transactionId String?
+  checkId       String?
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
 
-  check    Check?
-  uploader User?  @relation(fields: [uploaderId], references: [id], onDelete: SetNull)
+  transaction Transaction? @relation("TransactionAttachments", fields: [transactionId], references: [id], onDelete: Cascade)
+  check       Check?       @relation("CheckAttachments", fields: [checkId], references: [id], onDelete: Cascade)
+  uploader    User?        @relation(fields: [uploaderId], references: [id], onDelete: SetNull)
 }
 
 model Transaction {
@@ -165,6 +172,7 @@ model Transaction {
   note             String?
   channelReference String?
   category         TransactionCategory?
+  plate            String?
   bankAccountId    String?
   cardId           String?
   contactId        String?
@@ -174,6 +182,7 @@ model Transaction {
   posKomisyon      Decimal?             @db.Decimal(18, 2)
   posNet           Decimal?             @db.Decimal(18, 2)
   posEffectiveRate Decimal?             @db.Decimal(10, 4)
+  posProvider      PosProvider?
   meta             Json?
   createdAt        DateTime             @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime             @updatedAt @db.Timestamptz(6)
@@ -185,30 +194,35 @@ model Transaction {
   createdBy   User         @relation(fields: [createdById], references: [id])
   tags        TxnTag[]
   checkMoves  CheckMove[]
+  attachments Attachment[] @relation("TransactionAttachments")
+
+  @@index([txnDate], name: "idx_txn_date")
+  @@index([method, bankAccountId], name: "idx_txn_source")
+  @@index([contactId], name: "idx_txn_contact")
 }
 
 model Check {
-  id           String      @id @default(uuid())
-  serialNo     String
-  bank         String
-  amount       Decimal     @db.Decimal(18, 2)
-  dueDate      DateTime    @db.Timestamptz(6)
-  status       CheckStatus @default(IN_SAFE)
-  contactId    String?
-  attachmentId String?     @unique
-  notes        String?
-  issuedBy     String?
-  createdAt    DateTime    @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime    @updatedAt @db.Timestamptz(6)
+  id        String      @id @default(uuid())
+  serialNo  String
+  bank      String
+  amount    Decimal     @db.Decimal(18, 2)
+  dueDate   DateTime    @db.Timestamptz(6)
+  status    CheckStatus @default(IN_SAFE)
+  contactId String?
+  notes     String?
+  issuedBy  String?
+  createdAt DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime    @updatedAt @db.Timestamptz(6)
 
   contact      Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  attachment   Attachment?   @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
   transactions Transaction[]
   moves        CheckMove[]
+  attachments  Attachment[]  @relation("CheckAttachments")
 
   @@unique([serialNo])
   @@index([dueDate])
   @@index([status])
+  @@index([dueDate, status], name: "idx_checks_due")
 }
 
 model CheckMove {
