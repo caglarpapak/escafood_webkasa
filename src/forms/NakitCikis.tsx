@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
+import FormRow from '../components/FormRow';
+import DateInput from '../components/DateInput';
+import MoneyInput from '../components/MoneyInput';
+import SearchableSelect from '../components/SearchableSelect';
 import { BankMaster } from '../models/bank';
 import { Supplier } from '../models/supplier';
-import { parseTl } from '../utils/money';
-import { todayIso } from '../utils/date';
+import { formatTl } from '../utils/money';
+import { isoToDisplay, todayIso } from '../utils/date';
 
 export type NakitCikisKaynak =
   | 'TEDARIKCI_ODEME'
@@ -14,6 +18,7 @@ export interface NakitCikisFormValues {
   islemTarihiIso: string;
   kaynak: NakitCikisKaynak;
   bankaId?: string;
+  muhatapId?: string;
   muhatap?: string;
   aciklama?: string;
   tutar: number;
@@ -40,9 +45,10 @@ export default function NakitCikis({ isOpen, onClose, onSaved, currentUserEmail,
   const [islemTarihiIso, setIslemTarihiIso] = useState(todayIso());
   const [kaynak, setKaynak] = useState<NakitCikisKaynak>('TEDARIKCI_ODEME');
   const [bankaId, setBankaId] = useState('');
+  const [muhatapId, setMuhatapId] = useState<string | null>(null);
   const [muhatap, setMuhatap] = useState('');
   const [aciklama, setAciklama] = useState('');
-  const [tutarText, setTutarText] = useState('');
+  const [tutar, setTutar] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -50,9 +56,10 @@ export default function NakitCikis({ isOpen, onClose, onSaved, currentUserEmail,
       setIslemTarihiIso(todayIso());
       setKaynak('TEDARIKCI_ODEME');
       setBankaId('');
+      setMuhatapId(null);
       setMuhatap('');
       setAciklama('');
-      setTutarText('');
+      setTutar(null);
       setDirty(false);
     }
   }, [isOpen]);
@@ -66,15 +73,25 @@ export default function NakitCikis({ isOpen, onClose, onSaved, currentUserEmail,
   };
 
   const handleSave = () => {
-    const tutar = parseTl(tutarText || '0') || 0;
-    if (!islemTarihiIso || !kaynak || tutar <= 0) return;
+    if (!islemTarihiIso || !kaynak || !tutar || tutar <= 0) return;
     if (muhatapRequired && !muhatap) return;
     if (bankaRequired && !bankaId) return;
-    if (!window.confirm('Bu işlemi kaydetmek istediğinize emin misiniz?')) return;
+    const kaynakLabel = kaynakOptions.find((k) => k.value === kaynak)?.label || '';
+    const message = [
+      'Nakit çıkış kaydedilsin mi?',
+      '',
+      `Tarih: ${isoToDisplay(islemTarihiIso)}`,
+      `Kaynak: ${kaynakLabel}`,
+      `Muhatap: ${muhatap || '-'}`,
+      `Tutar: ${formatTl(tutar)}`,
+      `Açıklama: ${aciklama || '-'}`,
+    ].join('\n');
+    if (!window.confirm(message)) return;
     onSaved({
       islemTarihiIso,
       kaynak,
       bankaId: bankaRequired ? bankaId : undefined,
+      muhatapId: muhatapId || undefined,
       muhatap: muhatapRequired || muhatap ? muhatap : undefined,
       aciklama: aciklama || undefined,
       tutar,
@@ -91,21 +108,19 @@ export default function NakitCikis({ isOpen, onClose, onSaved, currentUserEmail,
           <div className="text-lg font-semibold">Nakit Çıkış</div>
           <button onClick={handleClose}>✕</button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <label>İşlem Tarihi</label>
-            <input
-              type="date"
+        <div className="space-y-4">
+          <FormRow label="İşlem Tarihi" required>
+            <DateInput
               value={islemTarihiIso}
-              onChange={(e) => {
-                setIslemTarihiIso(e.target.value);
+              onChange={(val) => {
+                setIslemTarihiIso(val);
                 setDirty(true);
               }}
             />
-          </div>
-          <div className="space-y-2">
-            <label>Kaynak</label>
+          </FormRow>
+          <FormRow label="Kaynak" required>
             <select
+              className="input"
               value={kaynak}
               onChange={(e) => {
                 setKaynak(e.target.value as NakitCikisKaynak);
@@ -118,11 +133,11 @@ export default function NakitCikis({ isOpen, onClose, onSaved, currentUserEmail,
                 </option>
               ))}
             </select>
-          </div>
+          </FormRow>
           {bankaRequired && (
-            <div className="space-y-2">
-              <label>Banka</label>
+            <FormRow label="Banka" required>
               <select
+                className="input"
                 value={bankaId}
                 onChange={(e) => {
                   setBankaId(e.target.value);
@@ -136,22 +151,36 @@ export default function NakitCikis({ isOpen, onClose, onSaved, currentUserEmail,
                   </option>
                 ))}
               </select>
-            </div>
+            </FormRow>
           )}
-          <div className="space-y-2">
-            <label>Muhatap</label>
+          <FormRow label="Muhatap" required={muhatapRequired}>
+            {kaynak === 'TEDARIKCI_ODEME' ? (
+              <SearchableSelect
+                valueId={muhatapId}
+                onChange={(val) => {
+                  setMuhatapId(val);
+                  const selected = suppliers.find((s) => s.id === val);
+                  setMuhatap(selected ? `${selected.kod} - ${selected.ad}` : '');
+                  setDirty(true);
+                }}
+                options={suppliers.map((s) => ({ id: s.id, label: `${s.kod} - ${s.ad}` }))}
+                placeholder="Tedarikçi seçiniz"
+              />
+            ) : (
+              <input
+                className="input"
+                value={muhatap}
+                onChange={(e) => {
+                  setMuhatap(e.target.value);
+                  setDirty(true);
+                }}
+                placeholder="Muhatap"
+              />
+            )}
+          </FormRow>
+          <FormRow label="Açıklama">
             <input
-              value={muhatap}
-              onChange={(e) => {
-                setMuhatap(e.target.value);
-                setDirty(true);
-              }}
-              placeholder="Muhatap"
-            />
-          </div>
-          <div className="space-y-2">
-            <label>Açıklama</label>
-            <input
+              className="input"
               value={aciklama}
               onChange={(e) => {
                 if (e.target.value.length <= 100) {
@@ -161,22 +190,21 @@ export default function NakitCikis({ isOpen, onClose, onSaved, currentUserEmail,
               }}
               placeholder="Açıklama"
             />
-          </div>
-          <div className="space-y-2">
-            <label>Tutar</label>
-            <input
-              value={tutarText}
-              onChange={(e) => {
-                setTutarText(e.target.value);
+          </FormRow>
+          <FormRow label="Tutar" required>
+            <MoneyInput
+              className="input"
+              value={tutar}
+              onChange={(val) => {
+                setTutar(val);
                 setDirty(true);
               }}
               placeholder="0,00"
             />
-          </div>
-          <div className="space-y-2">
-            <label>Kayıt Eden</label>
-            <input value={currentUserEmail} readOnly />
-          </div>
+          </FormRow>
+          <FormRow label="Kayıt Eden">
+            <input className="input" value={currentUserEmail} readOnly />
+          </FormRow>
         </div>
         <div className="flex justify-end space-x-3 mt-6">
           <button className="px-4 py-2 bg-slate-200 rounded-lg" onClick={handleClose}>

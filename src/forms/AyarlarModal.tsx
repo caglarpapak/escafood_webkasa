@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react';
+import FormRow from '../components/FormRow';
+import DateInput from '../components/DateInput';
+import MoneyInput from '../components/MoneyInput';
 import { BankMaster } from '../models/bank';
 import { PosTerminal } from '../models/pos';
 import { Customer } from '../models/customer';
@@ -7,8 +10,6 @@ import { CreditCard } from '../models/card';
 import { Loan } from '../models/loan';
 import { GlobalSettings } from '../models/settings';
 import { generateId } from '../utils/id';
-import { parseTl } from '../utils/money';
-import { todayIso } from '../utils/date';
 
 export type SettingsTabKey =
   | 'BANKALAR'
@@ -40,6 +41,25 @@ interface Props {
   setGlobalSettings: (gs: GlobalSettings) => void;
 }
 
+const tabs: { key: SettingsTabKey; label: string }[] = [
+  { key: 'BANKALAR', label: 'Bankalar' },
+  { key: 'POS', label: 'POS Listesi' },
+  { key: 'MUSTERI', label: 'Müşteriler' },
+  { key: 'TEDARIKCI', label: 'Tedarikçiler' },
+  { key: 'KARTLAR', label: 'Kredi Kartları' },
+  { key: 'KREDILER', label: 'Krediler' },
+  { key: 'GLOBAL', label: 'Global Ayarlar' },
+];
+
+function nextCode(items: { kod: string }[], prefix: string) {
+  const max = items.reduce((acc, item) => {
+    const num = parseInt(item.kod.replace(`${prefix}-`, ''), 10);
+    return Number.isNaN(num) ? acc : Math.max(acc, num);
+  }, 0);
+  const next = String(max + 1).padStart(4, '0');
+  return `${prefix}-${next}`;
+}
+
 export default function AyarlarModal(props: Props) {
   const {
     isOpen,
@@ -63,10 +83,14 @@ export default function AyarlarModal(props: Props) {
   } = props;
 
   const [dirty, setDirty] = useState(false);
+  const [globalForm, setGlobalForm] = useState<GlobalSettings>(globalSettings);
 
   useEffect(() => {
-    if (isOpen) setDirty(false);
-  }, [isOpen]);
+    if (isOpen) {
+      setDirty(false);
+      setGlobalForm(globalSettings);
+    }
+  }, [isOpen, globalSettings]);
 
   const handleClose = () => {
     if (dirty && !window.confirm('Kaydedilmemiş bilgiler var. Kapatmak istiyor musunuz?')) return;
@@ -83,17 +107,7 @@ export default function AyarlarModal(props: Props) {
           <button onClick={handleClose}>✕</button>
         </div>
         <div className="border-b mb-4 flex space-x-2 text-sm">
-          {(
-            [
-              { key: 'BANKALAR', label: 'Bankalar' },
-              { key: 'POS', label: 'POS Listesi' },
-              { key: 'MUSTERI', label: 'Müşteriler' },
-              { key: 'TEDARIKCI', label: 'Tedarikçiler' },
-              { key: 'KARTLAR', label: 'Kredi Kartları' },
-              { key: 'KREDILER', label: 'Krediler' },
-              { key: 'GLOBAL', label: 'Global Ayarlar' },
-            ] as { key: SettingsTabKey; label: string }[]
-          ).map((tab) => (
+          {tabs.map((tab) => (
             <button
               key={tab.key}
               className={`px-3 py-2 rounded-t ${activeTab === tab.key ? 'bg-white border border-b-white' : 'bg-slate-200'}`}
@@ -116,13 +130,27 @@ export default function AyarlarModal(props: Props) {
           <SupplierTab suppliers={suppliers} setSuppliers={setSuppliers} onDirty={() => setDirty(true)} />
         )}
         {activeTab === 'KARTLAR' && (
-          <CardTab banks={banks} creditCards={creditCards} setCreditCards={setCreditCards} onDirty={() => setDirty(true)} />
+          <CardTab
+            banks={banks}
+            creditCards={creditCards}
+            setCreditCards={setCreditCards}
+            onDirty={() => setDirty(true)}
+          />
         )}
         {activeTab === 'KREDILER' && (
           <LoanTab banks={banks} loans={loans} setLoans={setLoans} onDirty={() => setDirty(true)} />
         )}
         {activeTab === 'GLOBAL' && (
-          <GlobalTab globalSettings={globalSettings} setGlobalSettings={setGlobalSettings} onDirty={() => setDirty(true)} />
+          <GlobalTab
+            form={globalForm}
+            setForm={(f) => {
+              setGlobalForm(f);
+              setDirty(true);
+            }}
+            onSave={() => {
+              setGlobalSettings(globalForm);
+            }}
+          />
         )}
       </div>
     </div>
@@ -130,412 +158,841 @@ export default function AyarlarModal(props: Props) {
 }
 
 function BankalarTab({ banks, setBanks, onDirty }: { banks: BankMaster[]; setBanks: (b: BankMaster[]) => void; onDirty: () => void }) {
-  const [form, setForm] = useState({ bankaAdi: '', kodu: '', hesapAdi: '', iban: '', acilisBakiyesi: '', aktifMi: true });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    bankaAdi: '',
+    kodu: '',
+    hesapAdi: '',
+    iban: '',
+    acilisBakiyesi: 0,
+    aktifMi: true,
+  });
 
-  const addBank = () => {
-    const acilis = parseTl(form.acilisBakiyesi || '0') || 0;
+  useEffect(() => {
+    if (editingId) {
+      const bank = banks.find((b) => b.id === editingId);
+      if (bank) {
+        setForm({
+          bankaAdi: bank.bankaAdi,
+          kodu: bank.kodu,
+          hesapAdi: bank.hesapAdi,
+          iban: bank.iban || '',
+          acilisBakiyesi: bank.acilisBakiyesi,
+          aktifMi: bank.aktifMi,
+        });
+      }
+    } else {
+      setForm({ bankaAdi: '', kodu: '', hesapAdi: '', iban: '', acilisBakiyesi: 0, aktifMi: true });
+    }
+  }, [editingId, banks]);
+
+  const handleSave = () => {
     if (!form.bankaAdi || !form.kodu || !form.hesapAdi) return;
-    setBanks([...banks, { id: generateId(), bankaAdi: form.bankaAdi, kodu: form.kodu, hesapAdi: form.hesapAdi, iban: form.iban, acilisBakiyesi: acilis, aktifMi: form.aktifMi }]);
-    setForm({ bankaAdi: '', kodu: '', hesapAdi: '', iban: '', acilisBakiyesi: '', aktifMi: true });
+    if (editingId) {
+      setBanks(
+        banks.map((b) =>
+          b.id === editingId
+            ? { ...b, bankaAdi: form.bankaAdi, kodu: form.kodu, hesapAdi: form.hesapAdi, iban: form.iban, acilisBakiyesi: form.acilisBakiyesi || 0, aktifMi: form.aktifMi }
+            : b
+        )
+      );
+    } else {
+      setBanks([
+        ...banks,
+        {
+          id: generateId(),
+          bankaAdi: form.bankaAdi,
+          kodu: form.kodu,
+          hesapAdi: form.hesapAdi,
+          iban: form.iban,
+          acilisBakiyesi: form.acilisBakiyesi || 0,
+          aktifMi: form.aktifMi,
+        },
+      ]);
+    }
+    setEditingId(null);
     onDirty();
   };
 
-  const remove = (id: string) => setBanks(banks.filter((b) => b.id !== id));
+  const handleRemove = (id: string) => setBanks(banks.filter((b) => b.id !== id));
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div className="space-y-2">
-        <label>Banka Adı</label>
-        <input value={form.bankaAdi} onChange={(e) => setForm({ ...form, bankaAdi: e.target.value })} />
-        <label>Kodu</label>
-        <input value={form.kodu} onChange={(e) => setForm({ ...form, kodu: e.target.value })} />
-        <label>Hesap Adı</label>
-        <input value={form.hesapAdi} onChange={(e) => setForm({ ...form, hesapAdi: e.target.value })} />
-        <label>IBAN</label>
-        <input value={form.iban} onChange={(e) => setForm({ ...form, iban: e.target.value })} />
-        <label>Açılış Bakiyesi</label>
-        <input value={form.acilisBakiyesi} onChange={(e) => setForm({ ...form, acilisBakiyesi: e.target.value })} />
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="max-h-96 overflow-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50">
+              <th className="text-left px-2 py-1">Adı</th>
+              <th className="text-left px-2 py-1">Kodu</th>
+              <th className="text-left px-2 py-1">Hesap</th>
+              <th className="text-left px-2 py-1">Açılış</th>
+              <th className="px-2 py-1" />
+            </tr>
+          </thead>
+          <tbody>
+            {banks.map((b) => (
+              <tr key={b.id} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => setEditingId(b.id)}>
+                <td className="px-2 py-1">{b.bankaAdi}</td>
+                <td className="px-2 py-1">{b.kodu}</td>
+                <td className="px-2 py-1">{b.hesapAdi}</td>
+                <td className="px-2 py-1 text-right">{b.acilisBakiyesi.toFixed(2)}</td>
+                <td className="px-2 py-1 text-right">
+                  <button className="text-rose-600" onClick={() => handleRemove(b.id)}>
+                    Sil
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <div className="font-semibold">{editingId ? 'Banka Düzenle' : 'Yeni Banka'}</div>
+          <button className="text-sm text-indigo-600" onClick={() => setEditingId(null)}>
+            Yeni
+          </button>
+        </div>
+        <FormRow label="Banka Adı" required>
+          <input className="input" value={form.bankaAdi} onChange={(e) => setForm({ ...form, bankaAdi: e.target.value })} />
+        </FormRow>
+        <FormRow label="Kodu" required>
+          <input className="input" value={form.kodu} onChange={(e) => setForm({ ...form, kodu: e.target.value })} />
+        </FormRow>
+        <FormRow label="Hesap Adı" required>
+          <input className="input" value={form.hesapAdi} onChange={(e) => setForm({ ...form, hesapAdi: e.target.value })} />
+        </FormRow>
+        <FormRow label="IBAN">
+          <input className="input" value={form.iban} onChange={(e) => setForm({ ...form, iban: e.target.value })} />
+        </FormRow>
+        <FormRow label="Açılış Bakiyesi">
+          <MoneyInput className="input" value={form.acilisBakiyesi} onChange={(val) => setForm({ ...form, acilisBakiyesi: val || 0 })} />
+        </FormRow>
         <label className="inline-flex items-center space-x-2 text-sm">
           <input type="checkbox" checked={form.aktifMi} onChange={(e) => setForm({ ...form, aktifMi: e.target.checked })} />
           <span>Aktif</span>
         </label>
-        <button className="px-4 py-2 bg-indigo-600 text-white rounded" onClick={addBank}>Ekle</button>
-      </div>
-      <div className="max-h-72 overflow-auto text-sm divide-y">
-        {banks.map((b) => (
-          <div key={b.id} className="py-2 flex justify-between">
-            <div>
-              <div className="font-semibold">{b.hesapAdi}</div>
-              <div className="text-slate-500">{b.kodu}</div>
-            </div>
-            <button className="text-rose-600" onClick={() => remove(b.id)}>
-              Sil
-            </button>
-          </div>
-        ))}
+        <div className="flex justify-end">
+          <button className="btn-primary" onClick={handleSave}>
+            Kaydet
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 function PosTab({ banks, posTerminals, setPosTerminals, onDirty }: { banks: BankMaster[]; posTerminals: PosTerminal[]; setPosTerminals: (p: PosTerminal[]) => void; onDirty: () => void }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ bankaId: '', posAdi: '', komisyonOrani: 0.02, aktifMi: true });
 
-  const addPos = () => {
+  useEffect(() => {
+    if (editingId) {
+      const p = posTerminals.find((x) => x.id === editingId);
+      if (p) setForm({ bankaId: p.bankaId, posAdi: p.posAdi, komisyonOrani: p.komisyonOrani, aktifMi: p.aktifMi });
+    } else {
+      setForm({ bankaId: '', posAdi: '', komisyonOrani: 0.02, aktifMi: true });
+    }
+  }, [editingId, posTerminals]);
+
+  const save = () => {
     if (!form.bankaId || !form.posAdi) return;
-    setPosTerminals([...posTerminals, { id: generateId(), bankaId: form.bankaId, posAdi: form.posAdi, komisyonOrani: form.komisyonOrani, aktifMi: form.aktifMi }]);
-    setForm({ bankaId: '', posAdi: '', komisyonOrani: 0.02, aktifMi: true });
+    if (editingId) {
+      setPosTerminals(posTerminals.map((p) => (p.id === editingId ? { ...p, ...form } : p)));
+    } else {
+      setPosTerminals([...posTerminals, { id: generateId(), ...form }]);
+    }
+    setEditingId(null);
     onDirty();
   };
 
   const remove = (id: string) => setPosTerminals(posTerminals.filter((p) => p.id !== id));
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div className="space-y-2">
-        <label>Banka</label>
-        <select value={form.bankaId} onChange={(e) => setForm({ ...form, bankaId: e.target.value })}>
-          <option value="">Seçiniz</option>
-          {banks.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.hesapAdi}
-            </option>
-          ))}
-        </select>
-        <label>POS Adı</label>
-        <input value={form.posAdi} onChange={(e) => setForm({ ...form, posAdi: e.target.value })} />
-        <label>Komisyon Oranı</label>
-        <input
-          type="number"
-          step="0.001"
-          value={form.komisyonOrani}
-          onChange={(e) => setForm({ ...form, komisyonOrani: Number(e.target.value) })}
-        />
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="max-h-96 overflow-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50">
+              <th className="text-left px-2 py-1">POS</th>
+              <th className="text-left px-2 py-1">Banka</th>
+              <th className="text-left px-2 py-1">Komisyon</th>
+              <th className="px-2 py-1" />
+            </tr>
+          </thead>
+          <tbody>
+            {posTerminals.map((p) => (
+              <tr key={p.id} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => setEditingId(p.id)}>
+                <td className="px-2 py-1">{p.posAdi}</td>
+                <td className="px-2 py-1">{banks.find((b) => b.id === p.bankaId)?.bankaAdi || '-'}</td>
+                <td className="px-2 py-1">{(p.komisyonOrani * 100).toFixed(2)}%</td>
+                <td className="px-2 py-1 text-right">
+                  <button className="text-rose-600" onClick={() => remove(p.id)}>
+                    Sil
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <div className="font-semibold">{editingId ? 'POS Düzenle' : 'Yeni POS'}</div>
+          <button className="text-sm text-indigo-600" onClick={() => setEditingId(null)}>
+            Yeni
+          </button>
+        </div>
+        <FormRow label="Banka" required>
+          <select className="input" value={form.bankaId} onChange={(e) => setForm({ ...form, bankaId: e.target.value })}>
+            <option value="">Seçiniz</option>
+            {banks.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.hesapAdi}
+              </option>
+            ))}
+          </select>
+        </FormRow>
+        <FormRow label="POS Adı" required>
+          <input className="input" value={form.posAdi} onChange={(e) => setForm({ ...form, posAdi: e.target.value })} />
+        </FormRow>
+        <FormRow label="Komisyon Oranı" required>
+          <input
+            className="input"
+            type="number"
+            step="0.001"
+            value={form.komisyonOrani}
+            onChange={(e) => setForm({ ...form, komisyonOrani: Number(e.target.value) })}
+          />
+        </FormRow>
         <label className="inline-flex items-center space-x-2 text-sm">
           <input type="checkbox" checked={form.aktifMi} onChange={(e) => setForm({ ...form, aktifMi: e.target.checked })} />
           <span>Aktif</span>
         </label>
-        <button className="px-4 py-2 bg-indigo-600 text-white rounded" onClick={addPos}>Ekle</button>
-      </div>
-      <div className="max-h-72 overflow-auto text-sm divide-y">
-        {posTerminals.map((p) => (
-          <div key={p.id} className="py-2 flex justify-between">
-            <div>
-              <div className="font-semibold">{p.posAdi}</div>
-              <div className="text-slate-500">{banks.find((b) => b.id === p.bankaId)?.kodu || ''}</div>
-            </div>
-            <button className="text-rose-600" onClick={() => remove(p.id)}>
-              Sil
-            </button>
-          </div>
-        ))}
+        <div className="flex justify-end">
+          <button className="btn-primary" onClick={save}>
+            Kaydet
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 function CustomerTab({ customers, setCustomers, onDirty }: { customers: Customer[]; setCustomers: (c: Customer[]) => void; onDirty: () => void }) {
-  const [form, setForm] = useState({ kod: '', ad: '', aktifMi: true });
-  const add = () => {
-    if (!form.kod || !form.ad) return;
-    setCustomers([...customers, { id: generateId(), kod: form.kod, ad: form.ad, aktifMi: form.aktifMi }]);
-    setForm({ kod: '', ad: '', aktifMi: true });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<{ kod: string; ad: string; aktifMi: boolean }>({ kod: '', ad: '', aktifMi: true });
+
+  useEffect(() => {
+    if (editingId) {
+      const cust = customers.find((c) => c.id === editingId);
+      if (cust) setForm({ kod: cust.kod, ad: cust.ad, aktifMi: cust.aktifMi });
+    } else {
+      setForm({ kod: nextCode(customers, 'MUST'), ad: '', aktifMi: true });
+    }
+  }, [editingId, customers]);
+
+  const save = () => {
+    if (!form.ad) return;
+    if (editingId) {
+      setCustomers(customers.map((c) => (c.id === editingId ? { ...c, ad: form.ad, aktifMi: form.aktifMi } : c)));
+    } else {
+      setCustomers([...customers, { id: generateId(), kod: form.kod, ad: form.ad, aktifMi: form.aktifMi }]);
+    }
+    setEditingId(null);
     onDirty();
   };
+
   const remove = (id: string) => setCustomers(customers.filter((c) => c.id !== id));
+
+  const downloadCsv = () => {
+    const rows = ['kod,ad,aktifMi', ...customers.map((c) => `${c.kod},${c.ad},${c.aktifMi}`)];
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'customers-template.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const uploadCsv = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || '');
+      const lines = text.split(/\r?\n/).slice(1);
+      const updated = [...customers];
+      lines.forEach((line) => {
+        if (!line.trim()) return;
+        const [kodRaw, ad, aktifRaw] = line.split(',');
+        const kod = kodRaw?.trim();
+        if (!ad) return;
+        const aktifMi = aktifRaw?.trim() === 'true' || aktifRaw?.trim() === '1';
+        if (kod) {
+          const existing = updated.find((c) => c.kod === kod);
+          if (existing) {
+            existing.ad = ad.trim();
+            existing.aktifMi = aktifMi;
+          } else {
+            updated.push({ id: generateId(), kod, ad: ad.trim(), aktifMi });
+          }
+        } else {
+          updated.push({ id: generateId(), kod: nextCode(updated, 'MUST'), ad: ad.trim(), aktifMi });
+        }
+      });
+      setCustomers(updated);
+      onDirty();
+    };
+    reader.readAsText(file);
+  };
+
+  const triggerUpload = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.csv';
+    input.onchange = (e) => {
+      const target = e.target as HTMLInputElement;
+      if (target.files?.[0]) uploadCsv(target.files[0]);
+    };
+    input.click();
+  };
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div className="space-y-2">
-        <label>Kod</label>
-        <input value={form.kod} onChange={(e) => setForm({ ...form, kod: e.target.value })} />
-        <label>Ad</label>
-        <input value={form.ad} onChange={(e) => setForm({ ...form, ad: e.target.value })} />
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="max-h-96 overflow-auto">
+        <div className="flex justify-between mb-2 text-sm">
+          <button className="text-indigo-600" onClick={downloadCsv}>
+            CSV Şablonu İndir
+          </button>
+          <button className="text-indigo-600" onClick={triggerUpload}>
+            CSV Yükle
+          </button>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50">
+              <th className="text-left px-2 py-1">Kod</th>
+              <th className="text-left px-2 py-1">Ad</th>
+              <th className="text-left px-2 py-1">Aktif</th>
+              <th className="px-2 py-1" />
+            </tr>
+          </thead>
+          <tbody>
+            {customers.map((c) => (
+              <tr key={c.id} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => setEditingId(c.id)}>
+                <td className="px-2 py-1">{c.kod}</td>
+                <td className="px-2 py-1">{c.ad}</td>
+                <td className="px-2 py-1">{c.aktifMi ? 'Evet' : 'Hayır'}</td>
+                <td className="px-2 py-1 text-right">
+                  <button className="text-rose-600" onClick={() => remove(c.id)}>
+                    Sil
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <div className="font-semibold">{editingId ? 'Müşteri Düzenle' : 'Yeni Müşteri'}</div>
+          <button className="text-sm text-indigo-600" onClick={() => setEditingId(null)}>
+            Yeni
+          </button>
+        </div>
+        <FormRow label="Kod">
+          <input className="input" value={form.kod} readOnly />
+        </FormRow>
+        <FormRow label="Ad" required>
+          <input className="input" value={form.ad} onChange={(e) => setForm({ ...form, ad: e.target.value })} />
+        </FormRow>
         <label className="inline-flex items-center space-x-2 text-sm">
           <input type="checkbox" checked={form.aktifMi} onChange={(e) => setForm({ ...form, aktifMi: e.target.checked })} />
           <span>Aktif</span>
         </label>
-        <button className="px-4 py-2 bg-indigo-600 text-white rounded" onClick={add}>Ekle</button>
-      </div>
-      <div className="max-h-72 overflow-auto text-sm divide-y">
-        {customers.map((c) => (
-          <div key={c.id} className="py-2 flex justify-between">
-            <span>{c.kod} - {c.ad}</span>
-            <button className="text-rose-600" onClick={() => remove(c.id)}>Sil</button>
-          </div>
-        ))}
+        <div className="flex justify-end">
+          <button className="btn-primary" onClick={save}>
+            Kaydet
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 function SupplierTab({ suppliers, setSuppliers, onDirty }: { suppliers: Supplier[]; setSuppliers: (s: Supplier[]) => void; onDirty: () => void }) {
-  const [form, setForm] = useState({ kod: '', ad: '', aktifMi: true });
-  const add = () => {
-    if (!form.kod || !form.ad) return;
-    setSuppliers([...suppliers, { id: generateId(), kod: form.kod, ad: form.ad, aktifMi: form.aktifMi }]);
-    setForm({ kod: '', ad: '', aktifMi: true });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<{ kod: string; ad: string; aktifMi: boolean }>({ kod: '', ad: '', aktifMi: true });
+
+  useEffect(() => {
+    if (editingId) {
+      const sup = suppliers.find((s) => s.id === editingId);
+      if (sup) setForm({ kod: sup.kod, ad: sup.ad, aktifMi: sup.aktifMi });
+    } else {
+      setForm({ kod: nextCode(suppliers, 'TDRK'), ad: '', aktifMi: true });
+    }
+  }, [editingId, suppliers]);
+
+  const save = () => {
+    if (!form.ad) return;
+    if (editingId) {
+      setSuppliers(suppliers.map((s) => (s.id === editingId ? { ...s, ad: form.ad, aktifMi: form.aktifMi } : s)));
+    } else {
+      setSuppliers([...suppliers, { id: generateId(), kod: form.kod, ad: form.ad, aktifMi: form.aktifMi }]);
+    }
+    setEditingId(null);
     onDirty();
   };
-  const remove = (id: string) => setSuppliers(suppliers.filter((c) => c.id !== id));
+
+  const remove = (id: string) => setSuppliers(suppliers.filter((s) => s.id !== id));
+
+  const downloadCsv = () => {
+    const rows = ['kod,ad,aktifMi', ...suppliers.map((s) => `${s.kod},${s.ad},${s.aktifMi}`)];
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'suppliers-template.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const uploadCsv = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || '');
+      const lines = text.split(/\r?\n/).slice(1);
+      const updated = [...suppliers];
+      lines.forEach((line) => {
+        if (!line.trim()) return;
+        const [kodRaw, ad, aktifRaw] = line.split(',');
+        const kod = kodRaw?.trim();
+        if (!ad) return;
+        const aktifMi = aktifRaw?.trim() === 'true' || aktifRaw?.trim() === '1';
+        if (kod) {
+          const existing = updated.find((s) => s.kod === kod);
+          if (existing) {
+            existing.ad = ad.trim();
+            existing.aktifMi = aktifMi;
+          } else {
+            updated.push({ id: generateId(), kod, ad: ad.trim(), aktifMi });
+          }
+        } else {
+          updated.push({ id: generateId(), kod: nextCode(updated, 'TDRK'), ad: ad.trim(), aktifMi });
+        }
+      });
+      setSuppliers(updated);
+      onDirty();
+    };
+    reader.readAsText(file);
+  };
+
+  const triggerUpload = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.csv';
+    input.onchange = (e) => {
+      const target = e.target as HTMLInputElement;
+      if (target.files?.[0]) uploadCsv(target.files[0]);
+    };
+    input.click();
+  };
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div className="space-y-2">
-        <label>Kod</label>
-        <input value={form.kod} onChange={(e) => setForm({ ...form, kod: e.target.value })} />
-        <label>Ad</label>
-        <input value={form.ad} onChange={(e) => setForm({ ...form, ad: e.target.value })} />
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="max-h-96 overflow-auto">
+        <div className="flex justify-between mb-2 text-sm">
+          <button className="text-indigo-600" onClick={downloadCsv}>
+            CSV Şablonu İndir
+          </button>
+          <button className="text-indigo-600" onClick={triggerUpload}>
+            CSV Yükle
+          </button>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50">
+              <th className="text-left px-2 py-1">Kod</th>
+              <th className="text-left px-2 py-1">Ad</th>
+              <th className="text-left px-2 py-1">Aktif</th>
+              <th className="px-2 py-1" />
+            </tr>
+          </thead>
+          <tbody>
+            {suppliers.map((s) => (
+              <tr key={s.id} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => setEditingId(s.id)}>
+                <td className="px-2 py-1">{s.kod}</td>
+                <td className="px-2 py-1">{s.ad}</td>
+                <td className="px-2 py-1">{s.aktifMi ? 'Evet' : 'Hayır'}</td>
+                <td className="px-2 py-1 text-right">
+                  <button className="text-rose-600" onClick={() => remove(s.id)}>
+                    Sil
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <div className="font-semibold">{editingId ? 'Tedarikçi Düzenle' : 'Yeni Tedarikçi'}</div>
+          <button className="text-sm text-indigo-600" onClick={() => setEditingId(null)}>
+            Yeni
+          </button>
+        </div>
+        <FormRow label="Kod">
+          <input className="input" value={form.kod} readOnly />
+        </FormRow>
+        <FormRow label="Ad" required>
+          <input className="input" value={form.ad} onChange={(e) => setForm({ ...form, ad: e.target.value })} />
+        </FormRow>
         <label className="inline-flex items-center space-x-2 text-sm">
           <input type="checkbox" checked={form.aktifMi} onChange={(e) => setForm({ ...form, aktifMi: e.target.checked })} />
           <span>Aktif</span>
         </label>
-        <button className="px-4 py-2 bg-indigo-600 text-white rounded" onClick={add}>Ekle</button>
-      </div>
-      <div className="max-h-72 overflow-auto text-sm divide-y">
-        {suppliers.map((c) => (
-          <div key={c.id} className="py-2 flex justify-between">
-            <span>{c.kod} - {c.ad}</span>
-            <button className="text-rose-600" onClick={() => remove(c.id)}>Sil</button>
-          </div>
-        ))}
+        <div className="flex justify-end">
+          <button className="btn-primary" onClick={save}>
+            Kaydet
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankMaster[]; creditCards: CreditCard[]; setCreditCards: (c: CreditCard[]) => void; onDirty: () => void }) {
-  const [form, setForm] = useState({
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<CreditCard>({
+    id: '',
     kartAdi: '',
     bankaId: '',
-    kartLimit: '',
-    asgariOran: '',
-    hesapKesimGunu: '',
-    sonOdemeGunu: '',
+    kartLimit: 0,
+    asgariOran: 0.4,
+    hesapKesimGunu: 1,
+    sonOdemeGunu: 1,
     maskeliKartNo: '',
     aktifMi: true,
-    sonEkstreBorcu: '',
-    guncelBorc: '',
+    sonEkstreBorcu: 0,
+    guncelBorc: 0,
   });
 
-  const add = () => {
-    const limit = parseTl(form.kartLimit || '0') || 0;
-    const asgari = Number(form.asgariOran || '0') || 0;
-    const sonEkstre = parseTl(form.sonEkstreBorcu || '0') || 0;
-    const borc = parseTl(form.guncelBorc || '0') || 0;
+  useEffect(() => {
+    if (editingId) {
+      const card = creditCards.find((c) => c.id === editingId);
+      if (card) setForm(card);
+    } else {
+      setForm({
+        id: '',
+        kartAdi: '',
+        bankaId: '',
+        kartLimit: 0,
+        asgariOran: 0.4,
+        hesapKesimGunu: 1,
+        sonOdemeGunu: 1,
+        maskeliKartNo: '',
+        aktifMi: true,
+        sonEkstreBorcu: 0,
+        guncelBorc: 0,
+      });
+    }
+  }, [editingId, creditCards]);
+
+  const save = () => {
     if (!form.kartAdi || !form.bankaId) return;
-    setCreditCards([
-      ...creditCards,
-      {
-        id: generateId(),
-        kartAdi: form.kartAdi,
-        bankaId: form.bankaId,
-        kartLimit: limit,
-        asgariOran: asgari,
-        hesapKesimGunu: Number(form.hesapKesimGunu || '1'),
-        sonOdemeGunu: Number(form.sonOdemeGunu || '1'),
-        maskeliKartNo: form.maskeliKartNo,
-        aktifMi: form.aktifMi,
-        sonEkstreBorcu: sonEkstre,
-        guncelBorc: borc,
-      },
-    ]);
-    setForm({
-      kartAdi: '',
-      bankaId: '',
-      kartLimit: '',
-      asgariOran: '',
-      hesapKesimGunu: '',
-      sonOdemeGunu: '',
-      maskeliKartNo: '',
-      aktifMi: true,
-      sonEkstreBorcu: '',
-      guncelBorc: '',
-    });
+    if (editingId) {
+      setCreditCards(creditCards.map((c) => (c.id === editingId ? { ...form, id: editingId } : c)));
+    } else {
+      setCreditCards([...creditCards, { ...form, id: generateId() }]);
+    }
+    setEditingId(null);
     onDirty();
   };
 
   const remove = (id: string) => setCreditCards(creditCards.filter((c) => c.id !== id));
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div className="space-y-2">
-        <label>Kart Adı</label>
-        <input value={form.kartAdi} onChange={(e) => setForm({ ...form, kartAdi: e.target.value })} />
-        <label>Banka</label>
-        <select value={form.bankaId} onChange={(e) => setForm({ ...form, bankaId: e.target.value })}>
-          <option value="">Seçiniz</option>
-          {banks.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.hesapAdi}
-            </option>
-          ))}
-        </select>
-        <label>Kart Limit</label>
-        <input value={form.kartLimit} onChange={(e) => setForm({ ...form, kartLimit: e.target.value })} />
-        <label>Asgari Oran</label>
-        <input value={form.asgariOran} onChange={(e) => setForm({ ...form, asgariOran: e.target.value })} />
-        <label>Hesap Kesim Günü</label>
-        <input value={form.hesapKesimGunu} onChange={(e) => setForm({ ...form, hesapKesimGunu: e.target.value })} />
-        <label>Son Ödeme Günü</label>
-        <input value={form.sonOdemeGunu} onChange={(e) => setForm({ ...form, sonOdemeGunu: e.target.value })} />
-        <label>Maskeli Kart No</label>
-        <input value={form.maskeliKartNo} onChange={(e) => setForm({ ...form, maskeliKartNo: e.target.value })} />
-        <label>Son Ekstre Borcu</label>
-        <input value={form.sonEkstreBorcu} onChange={(e) => setForm({ ...form, sonEkstreBorcu: e.target.value })} />
-        <label>Güncel Borç</label>
-        <input value={form.guncelBorc} onChange={(e) => setForm({ ...form, guncelBorc: e.target.value })} />
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="max-h-96 overflow-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50">
+              <th className="text-left px-2 py-1">Kart</th>
+              <th className="text-left px-2 py-1">Banka</th>
+              <th className="text-left px-2 py-1">Limit</th>
+              <th className="text-left px-2 py-1">Güncel Borç</th>
+              <th className="px-2 py-1" />
+            </tr>
+          </thead>
+          <tbody>
+            {creditCards.map((c) => (
+              <tr key={c.id} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => setEditingId(c.id)}>
+                <td className="px-2 py-1">{c.kartAdi}</td>
+                <td className="px-2 py-1">{banks.find((b) => b.id === c.bankaId)?.bankaAdi || '-'}</td>
+                <td className="px-2 py-1 text-right">{c.kartLimit.toFixed(2)}</td>
+                <td className="px-2 py-1 text-right">{c.guncelBorc.toFixed(2)}</td>
+                <td className="px-2 py-1 text-right">
+                  <button className="text-rose-600" onClick={() => remove(c.id)}>
+                    Sil
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <div className="font-semibold">{editingId ? 'Kart Düzenle' : 'Yeni Kart'}</div>
+          <button className="text-sm text-indigo-600" onClick={() => setEditingId(null)}>
+            Yeni
+          </button>
+        </div>
+        <FormRow label="Kart Adı" required>
+          <input className="input" value={form.kartAdi} onChange={(e) => setForm({ ...form, kartAdi: e.target.value })} />
+        </FormRow>
+        <FormRow label="Banka" required>
+          <select className="input" value={form.bankaId} onChange={(e) => setForm({ ...form, bankaId: e.target.value })}>
+            <option value="">Seçiniz</option>
+            {banks.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.hesapAdi}
+              </option>
+            ))}
+          </select>
+        </FormRow>
+        <FormRow label="Kart Limit" required>
+          <MoneyInput className="input" value={form.kartLimit} onChange={(val) => setForm({ ...form, kartLimit: val || 0 })} />
+        </FormRow>
+        <FormRow label="Güncel Borç" required>
+          <MoneyInput className="input" value={form.guncelBorc} onChange={(val) => setForm({ ...form, guncelBorc: val || 0 })} />
+        </FormRow>
+        <FormRow label="Asgari Oran">
+          <input
+            className="input"
+            type="number"
+            step="0.01"
+            value={form.asgariOran}
+            onChange={(e) => setForm({ ...form, asgariOran: Number(e.target.value) })}
+          />
+        </FormRow>
+        <FormRow label="Hesap Kesim Günü">
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={31}
+            value={form.hesapKesimGunu}
+            onChange={(e) => setForm({ ...form, hesapKesimGunu: Number(e.target.value) })}
+          />
+        </FormRow>
+        <FormRow label="Son Ödeme Günü">
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={31}
+            value={form.sonOdemeGunu}
+            onChange={(e) => setForm({ ...form, sonOdemeGunu: Number(e.target.value) })}
+          />
+        </FormRow>
+        <FormRow label="Maskeli Kart No">
+          <input className="input" value={form.maskeliKartNo} onChange={(e) => setForm({ ...form, maskeliKartNo: e.target.value })} />
+        </FormRow>
+        <FormRow label="Son Ekstre Borcu">
+          <MoneyInput className="input" value={form.sonEkstreBorcu} onChange={(val) => setForm({ ...form, sonEkstreBorcu: val || 0 })} />
+        </FormRow>
         <label className="inline-flex items-center space-x-2 text-sm">
           <input type="checkbox" checked={form.aktifMi} onChange={(e) => setForm({ ...form, aktifMi: e.target.checked })} />
           <span>Aktif</span>
         </label>
-        <button className="px-4 py-2 bg-indigo-600 text-white rounded" onClick={add}>Ekle</button>
-      </div>
-      <div className="max-h-72 overflow-auto text-sm divide-y">
-        {creditCards.map((c) => (
-          <div key={c.id} className="py-2 flex justify-between">
-            <div>
-              <div className="font-semibold">{c.kartAdi}</div>
-              <div className="text-slate-500">{banks.find((b) => b.id === c.bankaId)?.kodu || ''}</div>
-            </div>
-            <button className="text-rose-600" onClick={() => remove(c.id)}>
-              Sil
-            </button>
-          </div>
-        ))}
+        <div className="flex justify-end">
+          <button className="btn-primary" onClick={save}>
+            Kaydet
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 function LoanTab({ banks, loans, setLoans, onDirty }: { banks: BankMaster[]; loans: Loan[]; setLoans: (l: Loan[]) => void; onDirty: () => void }) {
-  const [form, setForm] = useState({
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<Loan>({
+    id: '',
     krediAdi: '',
     bankaId: '',
-    toplamKrediTutari: '',
-    vadeSayisi: '',
-    ilkTaksitTarihi: todayIso(),
-    faizOraniYillik: '',
-    bsmvOrani: '',
+    toplamKrediTutari: 0,
+    vadeSayisi: 1,
+    ilkTaksitTarihi: '',
+    faizOraniYillik: 0.3,
+    bsmvOrani: 0.05,
     aktifMi: true,
   });
 
-  const add = () => {
-    const toplam = parseTl(form.toplamKrediTutari || '0') || 0;
-    const vade = Number(form.vadeSayisi || '0');
-    const faiz = Number(form.faizOraniYillik || '0');
-    const bsmv = Number(form.bsmvOrani || '0');
+  useEffect(() => {
+    if (editingId) {
+      const loan = loans.find((l) => l.id === editingId);
+      if (loan) setForm(loan);
+    } else {
+      setForm({
+        id: '',
+        krediAdi: '',
+        bankaId: '',
+        toplamKrediTutari: 0,
+        vadeSayisi: 1,
+        ilkTaksitTarihi: '',
+        faizOraniYillik: 0.3,
+        bsmvOrani: 0.05,
+        aktifMi: true,
+      });
+    }
+  }, [editingId, loans]);
+
+  const save = () => {
     if (!form.krediAdi || !form.bankaId || !form.ilkTaksitTarihi) return;
-    setLoans([
-      ...loans,
-      {
-        id: generateId(),
-        krediAdi: form.krediAdi,
-        bankaId: form.bankaId,
-        toplamKrediTutari: toplam,
-        vadeSayisi: vade,
-        ilkTaksitTarihi: form.ilkTaksitTarihi,
-        faizOraniYillik: faiz,
-        bsmvOrani: bsmv,
-        aktifMi: form.aktifMi,
-      },
-    ]);
-    setForm({
-      krediAdi: '',
-      bankaId: '',
-      toplamKrediTutari: '',
-      vadeSayisi: '',
-      ilkTaksitTarihi: todayIso(),
-      faizOraniYillik: '',
-      bsmvOrani: '',
-      aktifMi: true,
-    });
+    if (editingId) {
+      setLoans(loans.map((l) => (l.id === editingId ? { ...form, id: editingId } : l)));
+    } else {
+      setLoans([...loans, { ...form, id: generateId() }]);
+    }
+    setEditingId(null);
     onDirty();
   };
 
   const remove = (id: string) => setLoans(loans.filter((l) => l.id !== id));
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div className="space-y-2">
-        <label>Kredi Adı</label>
-        <input value={form.krediAdi} onChange={(e) => setForm({ ...form, krediAdi: e.target.value })} />
-        <label>Banka</label>
-        <select value={form.bankaId} onChange={(e) => setForm({ ...form, bankaId: e.target.value })}>
-          <option value="">Seçiniz</option>
-          {banks.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.hesapAdi}
-            </option>
-          ))}
-        </select>
-        <label>Toplam Kredi Tutarı</label>
-        <input value={form.toplamKrediTutari} onChange={(e) => setForm({ ...form, toplamKrediTutari: e.target.value })} />
-        <label>Vade Sayısı</label>
-        <input value={form.vadeSayisi} onChange={(e) => setForm({ ...form, vadeSayisi: e.target.value })} />
-        <label>İlk Taksit Tarihi</label>
-        <input type="date" value={form.ilkTaksitTarihi} onChange={(e) => setForm({ ...form, ilkTaksitTarihi: e.target.value })} />
-        <label>Faiz Oranı (Yıllık)</label>
-        <input value={form.faizOraniYillik} onChange={(e) => setForm({ ...form, faizOraniYillik: e.target.value })} />
-        <label>BSMV Oranı</label>
-        <input value={form.bsmvOrani} onChange={(e) => setForm({ ...form, bsmvOrani: e.target.value })} />
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="max-h-96 overflow-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50">
+              <th className="text-left px-2 py-1">Kredi</th>
+              <th className="text-left px-2 py-1">Banka</th>
+              <th className="text-left px-2 py-1">Tutar</th>
+              <th className="text-left px-2 py-1">Vade</th>
+              <th className="px-2 py-1" />
+            </tr>
+          </thead>
+          <tbody>
+            {loans.map((l) => (
+              <tr key={l.id} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => setEditingId(l.id)}>
+                <td className="px-2 py-1">{l.krediAdi}</td>
+                <td className="px-2 py-1">{banks.find((b) => b.id === l.bankaId)?.bankaAdi || '-'}</td>
+                <td className="px-2 py-1 text-right">{l.toplamKrediTutari.toFixed(2)}</td>
+                <td className="px-2 py-1">{l.vadeSayisi}</td>
+                <td className="px-2 py-1 text-right">
+                  <button className="text-rose-600" onClick={() => remove(l.id)}>
+                    Sil
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <div className="font-semibold">{editingId ? 'Kredi Düzenle' : 'Yeni Kredi'}</div>
+          <button className="text-sm text-indigo-600" onClick={() => setEditingId(null)}>
+            Yeni
+          </button>
+        </div>
+        <FormRow label="Kredi Adı" required>
+          <input className="input" value={form.krediAdi} onChange={(e) => setForm({ ...form, krediAdi: e.target.value })} />
+        </FormRow>
+        <FormRow label="Banka" required>
+          <select className="input" value={form.bankaId} onChange={(e) => setForm({ ...form, bankaId: e.target.value })}>
+            <option value="">Seçiniz</option>
+            {banks.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.hesapAdi}
+              </option>
+            ))}
+          </select>
+        </FormRow>
+        <FormRow label="Toplam Kredi Tutarı" required>
+          <MoneyInput className="input" value={form.toplamKrediTutari} onChange={(val) => setForm({ ...form, toplamKrediTutari: val || 0 })} />
+        </FormRow>
+        <FormRow label="Vade Sayısı" required>
+          <input
+            className="input"
+            type="number"
+            min={1}
+            value={form.vadeSayisi}
+            onChange={(e) => setForm({ ...form, vadeSayisi: Number(e.target.value) })}
+          />
+        </FormRow>
+        <FormRow label="İlk Taksit Tarihi" required>
+          <DateInput value={form.ilkTaksitTarihi} onChange={(val) => setForm({ ...form, ilkTaksitTarihi: val })} />
+        </FormRow>
+        <FormRow label="Yıllık Faiz Oranı">
+          <input
+            className="input"
+            type="number"
+            step="0.001"
+            value={form.faizOraniYillik}
+            onChange={(e) => setForm({ ...form, faizOraniYillik: Number(e.target.value) })}
+          />
+        </FormRow>
+        <FormRow label="BSMV Oranı">
+          <input
+            className="input"
+            type="number"
+            step="0.001"
+            value={form.bsmvOrani}
+            onChange={(e) => setForm({ ...form, bsmvOrani: Number(e.target.value) })}
+          />
+        </FormRow>
         <label className="inline-flex items-center space-x-2 text-sm">
           <input type="checkbox" checked={form.aktifMi} onChange={(e) => setForm({ ...form, aktifMi: e.target.checked })} />
           <span>Aktif</span>
         </label>
-        <button className="px-4 py-2 bg-indigo-600 text-white rounded" onClick={add}>Ekle</button>
-      </div>
-      <div className="max-h-72 overflow-auto text-sm divide-y">
-        {loans.map((l) => (
-          <div key={l.id} className="py-2 flex justify-between">
-            <div>
-              <div className="font-semibold">{l.krediAdi}</div>
-              <div className="text-slate-500">{banks.find((b) => b.id === l.bankaId)?.kodu || ''}</div>
-            </div>
-            <button className="text-rose-600" onClick={() => remove(l.id)}>
-              Sil
-            </button>
-          </div>
-        ))}
+        <div className="flex justify-end">
+          <button className="btn-primary" onClick={save}>
+            Kaydet
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-function GlobalTab({ globalSettings, setGlobalSettings, onDirty }: { globalSettings: GlobalSettings; setGlobalSettings: (g: GlobalSettings) => void; onDirty: () => void }) {
-  const [form, setForm] = useState(globalSettings);
-
-  useEffect(() => {
-    setForm(globalSettings);
-  }, [globalSettings]);
-
-  const save = () => {
-    setGlobalSettings(form);
-    onDirty();
-  };
-
+function GlobalTab({ form, setForm, onSave }: { form: GlobalSettings; setForm: (f: GlobalSettings) => void; onSave: () => void }) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div className="space-y-2">
-        <label>Varsayılan Asgari Ödeme Oranı</label>
+    <div className="space-y-4">
+      <FormRow label="Varsayılan Asgari Ödeme Oranı">
         <input
+          className="input"
           type="number"
           step="0.01"
           value={form.varsayilanAsgariOdemeOrani}
           onChange={(e) => setForm({ ...form, varsayilanAsgariOdemeOrani: Number(e.target.value) })}
         />
-        <label>Varsayılan BSMV Oranı</label>
+      </FormRow>
+      <FormRow label="Varsayılan BSMV Oranı">
         <input
+          className="input"
           type="number"
           step="0.01"
           value={form.varsayilanBsmvOrani}
           onChange={(e) => setForm({ ...form, varsayilanBsmvOrani: Number(e.target.value) })}
         />
-        <label>Yaklaşan Ödeme Gün</label>
+      </FormRow>
+      <FormRow label="Yaklaşan Ödeme Gün Sayısı">
         <input
+          className="input"
           type="number"
+          min={0}
           value={form.yaklasanOdemeGun}
           onChange={(e) => setForm({ ...form, yaklasanOdemeGun: Number(e.target.value) })}
         />
-        <button className="px-4 py-2 bg-indigo-600 text-white rounded" onClick={save}>Kaydet</button>
+      </FormRow>
+      <div className="flex justify-end">
+        <button className="btn-primary" onClick={onSave}>
+          Kaydet
+        </button>
       </div>
     </div>
   );

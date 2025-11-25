@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
+import FormRow from '../components/FormRow';
+import DateInput from '../components/DateInput';
+import MoneyInput from '../components/MoneyInput';
+import SearchableSelect from '../components/SearchableSelect';
 import { BankMaster } from '../models/bank';
-import { parseTl } from '../utils/money';
-import { todayIso } from '../utils/date';
+import { Customer } from '../models/customer';
+import { Supplier } from '../models/supplier';
+import { formatTl } from '../utils/money';
+import { isoToDisplay, todayIso } from '../utils/date';
 
 export type BankaNakitGirisTuru =
   | 'MUSTERI_EFT'
@@ -14,6 +20,7 @@ export interface BankaNakitGirisFormValues {
   islemTarihiIso: string;
   bankaId: string;
   islemTuru: BankaNakitGirisTuru;
+  muhatapId?: string;
   muhatap?: string;
   aciklama?: string;
   tutar: number;
@@ -27,6 +34,8 @@ interface Props {
   onSaved: (values: BankaNakitGirisFormValues) => void;
   currentUserEmail: string;
   banks: BankMaster[];
+  customers: Customer[];
+  suppliers: Supplier[];
 }
 
 const turLabels: Record<BankaNakitGirisTuru, string> = {
@@ -37,13 +46,22 @@ const turLabels: Record<BankaNakitGirisTuru, string> = {
   DIGER_BANKA_GIRIS: 'Diğer Banka Girişi',
 };
 
-export default function BankaNakitGiris({ isOpen, onClose, onSaved, currentUserEmail, banks }: Props) {
+export default function BankaNakitGiris({
+  isOpen,
+  onClose,
+  onSaved,
+  currentUserEmail,
+  banks,
+  customers,
+  suppliers,
+}: Props) {
   const [islemTarihiIso, setIslemTarihiIso] = useState(todayIso());
   const [bankaId, setBankaId] = useState('');
   const [islemTuru, setIslemTuru] = useState<BankaNakitGirisTuru>('MUSTERI_EFT');
+  const [muhatapId, setMuhatapId] = useState<string | null>(null);
   const [muhatap, setMuhatap] = useState('');
   const [aciklama, setAciklama] = useState('');
-  const [tutarText, setTutarText] = useState('');
+  const [tutar, setTutar] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -51,9 +69,10 @@ export default function BankaNakitGiris({ isOpen, onClose, onSaved, currentUserE
       setIslemTarihiIso(todayIso());
       setBankaId('');
       setIslemTuru('MUSTERI_EFT');
+      setMuhatapId(null);
       setMuhatap('');
       setAciklama('');
-      setTutarText('');
+      setTutar(null);
       setDirty(false);
     }
   }, [isOpen]);
@@ -69,14 +88,26 @@ export default function BankaNakitGiris({ isOpen, onClose, onSaved, currentUserE
   };
 
   const handleSave = () => {
-    const tutar = parseTl(tutarText || '0') || 0;
-    if (!islemTarihiIso || !bankaId || !islemTuru || tutar <= 0) return;
+    if (!islemTarihiIso || !bankaId || !islemTuru || !tutar || tutar <= 0) return;
     if (muhatapRequired && !muhatap) return;
-    if (!window.confirm('Bu işlemi kaydetmek istediğinize emin misiniz?')) return;
+    const muhatapLabel = muhatap || '-';
+    const bankaName = banks.find((b) => b.id === bankaId)?.hesapAdi || '-';
+    const message = [
+      'Banka nakit giriş kaydedilsin mi?',
+      '',
+      `Tarih: ${isoToDisplay(islemTarihiIso)}`,
+      `Banka: ${bankaName}`,
+      `İşlem Türü: ${turLabels[islemTuru]}`,
+      `Muhatap: ${muhatapLabel}`,
+      `Tutar: ${formatTl(tutar)}`,
+      `Açıklama: ${aciklama || '-'}`,
+    ].join('\n');
+    if (!window.confirm(message)) return;
     onSaved({
       islemTarihiIso,
       bankaId,
       islemTuru,
+      muhatapId: muhatapId || undefined,
       muhatap: muhatapRequired || muhatap ? muhatap : undefined,
       aciklama: aciklama || undefined,
       tutar,
@@ -94,21 +125,19 @@ export default function BankaNakitGiris({ isOpen, onClose, onSaved, currentUserE
           <div className="text-lg font-semibold">Banka Nakit Giriş</div>
           <button onClick={handleClose}>✕</button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <label>İşlem Tarihi</label>
-            <input
-              type="date"
+        <div className="space-y-4">
+          <FormRow label="İşlem Tarihi" required>
+            <DateInput
               value={islemTarihiIso}
-              onChange={(e) => {
-                setIslemTarihiIso(e.target.value);
+              onChange={(val) => {
+                setIslemTarihiIso(val);
                 setDirty(true);
               }}
             />
-          </div>
-          <div className="space-y-2">
-            <label>Banka</label>
+          </FormRow>
+          <FormRow label="Banka" required>
             <select
+              className="input"
               value={bankaId}
               onChange={(e) => {
                 setBankaId(e.target.value);
@@ -122,10 +151,10 @@ export default function BankaNakitGiris({ isOpen, onClose, onSaved, currentUserE
                 </option>
               ))}
             </select>
-          </div>
-          <div className="space-y-2">
-            <label>İşlem Türü</label>
+          </FormRow>
+          <FormRow label="İşlem Türü" required>
             <select
+              className="input"
               value={islemTuru}
               onChange={(e) => {
                 setIslemTuru(e.target.value as BankaNakitGirisTuru);
@@ -138,21 +167,45 @@ export default function BankaNakitGiris({ isOpen, onClose, onSaved, currentUserE
                 </option>
               ))}
             </select>
-          </div>
-          <div className="space-y-2">
-            <label>Muhatap</label>
+          </FormRow>
+          <FormRow label="Muhatap" required={muhatapRequired}>
+            {['MUSTERI_EFT', 'TEDARIKCI_EFT', 'ORTAK_EFT_GELEN'].includes(islemTuru) ? (
+              <SearchableSelect
+                valueId={muhatapId}
+                onChange={(val) => {
+                  setMuhatapId(val);
+                  const sourceList = islemTuru === 'TEDARIKCI_EFT' ? suppliers : customers;
+                  const selected = sourceList.find((m) => m.id === val);
+                  const label = selected
+                    ? `${'kod' in selected && (selected as Supplier).kod ? (selected as Supplier).kod + ' - ' : ''}${
+                        (selected as Customer | Supplier).ad
+                      }`
+                    : '';
+                  setMuhatap(label);
+                  setDirty(true);
+                }}
+                options={
+                  islemTuru === 'TEDARIKCI_EFT'
+                    ? suppliers.map((s) => ({ id: s.id, label: `${s.kod} - ${s.ad}` }))
+                    : customers.map((c) => ({ id: c.id, label: `${c.kod} - ${c.ad}` }))
+                }
+                placeholder="Muhatap seçiniz"
+              />
+            ) : (
+              <input
+                className="input"
+                value={muhatap}
+                onChange={(e) => {
+                  setMuhatap(e.target.value);
+                  setDirty(true);
+                }}
+                placeholder="Muhatap"
+              />
+            )}
+          </FormRow>
+          <FormRow label="Açıklama">
             <input
-              value={muhatap}
-              onChange={(e) => {
-                setMuhatap(e.target.value);
-                setDirty(true);
-              }}
-              placeholder="Muhatap"
-            />
-          </div>
-          <div className="space-y-2">
-            <label>Açıklama</label>
-            <input
+              className="input"
               value={aciklama}
               onChange={(e) => {
                 if (e.target.value.length <= 100) {
@@ -162,22 +215,21 @@ export default function BankaNakitGiris({ isOpen, onClose, onSaved, currentUserE
               }}
               placeholder="Açıklama"
             />
-          </div>
-          <div className="space-y-2">
-            <label>Tutar</label>
-            <input
-              value={tutarText}
-              onChange={(e) => {
-                setTutarText(e.target.value);
+          </FormRow>
+          <FormRow label="Tutar" required>
+            <MoneyInput
+              className="input"
+              value={tutar}
+              onChange={(val) => {
+                setTutar(val);
                 setDirty(true);
               }}
               placeholder="0,00"
             />
-          </div>
-          <div className="space-y-2">
-            <label>Kayıt Eden</label>
-            <input value={currentUserEmail} readOnly />
-          </div>
+          </FormRow>
+          <FormRow label="Kayıt Eden">
+            <input className="input" value={currentUserEmail} readOnly />
+          </FormRow>
         </div>
         <div className="flex justify-end space-x-3 mt-6">
           <button className="px-4 py-2 bg-slate-200 rounded-lg" onClick={handleClose}>

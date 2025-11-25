@@ -207,6 +207,14 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
 
   const handleNakitCikisSaved = (values: NakitCikisFormValues) => {
     const documentNo = getNextBelgeNo('NKT-CKS', values.islemTarihiIso, dailyTransactions);
+    const supplierName =
+      values.muhatapId && suppliers.find((s) => s.id === values.muhatapId)
+        ? (() => {
+            const s = suppliers.find((sup) => sup.id === values.muhatapId)!;
+            return `${s.kod} - ${s.ad}`;
+          })()
+        : undefined;
+    const counterparty = supplierName || values.muhatap || 'Diğer';
     const tx: DailyTransaction = {
       id: generateId(),
       isoDate: values.islemTarihiIso,
@@ -214,7 +222,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       documentNo,
       type: 'Nakit Çıkış',
       source: values.kaynak,
-      counterparty: values.muhatap || 'Diğer',
+      counterparty,
       description: values.aciklama || '',
       incoming: 0,
       outgoing: values.tutar,
@@ -229,6 +237,13 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
 
   const handleBankaNakitGirisSaved = (values: BankaNakitGirisFormValues) => {
     const documentNo = getNextBelgeNo('BNK-GRS', values.islemTarihiIso, dailyTransactions);
+    const foundCustomer = values.muhatapId ? customers.find((c) => c.id === values.muhatapId) : undefined;
+    const foundSupplier = values.muhatapId ? suppliers.find((s) => s.id === values.muhatapId) : undefined;
+    const counterparty =
+      (foundCustomer && `${foundCustomer.kod} - ${foundCustomer.ad}`) ||
+      (foundSupplier && `${foundSupplier.kod} - ${foundSupplier.ad}`) ||
+      values.muhatap ||
+      'Diğer';
     const tx: DailyTransaction = {
       id: generateId(),
       isoDate: values.islemTarihiIso,
@@ -236,7 +251,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       documentNo,
       type: values.islemTuru === 'CEK_TAHSILATI' ? 'Banka Giriş - Çek Tahsilatı' : 'Banka Giriş',
       source: values.islemTuru,
-      counterparty: values.muhatap || 'Diğer',
+      counterparty,
       description: values.aciklama || '',
       incoming: 0,
       outgoing: 0,
@@ -670,6 +685,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         onSaved={handleBankaNakitGirisSaved}
         currentUserEmail={currentUser.email}
         banks={banks}
+        customers={customers}
+        suppliers={suppliers}
       />
       <BankaNakitCikis
         isOpen={openForm === 'BANKA_CIKIS'}
