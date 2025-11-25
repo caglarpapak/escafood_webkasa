@@ -1,45 +1,69 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { formatTlPlain, parseTl } from '../utils/money';
 
-interface MoneyInputProps {
+interface MoneyInputProps
+  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> {
   value: number | null;
   onChange: (value: number | null) => void;
-  placeholder?: string;
 }
 
-export default function MoneyInput({ value, onChange, placeholder }: MoneyInputProps) {
-  const [inputValue, setInputValue] = useState('');
+const MoneyInput: React.FC<MoneyInputProps> = ({ value, onChange, ...rest }) => {
+  const [text, setText] = useState('');
+  const [isFocused, setIsFocused] = useState(false);
 
   useEffect(() => {
-    if (value === null || Number.isNaN(value)) {
-      setInputValue('');
-    } else {
-      setInputValue(formatTlPlain(value));
-    }
-  }, [value]);
+    if (isFocused) return;
 
-  const handleChange = (val: string) => {
-    setInputValue(val);
-    const parsed = parseTl(val);
-    onChange(parsed);
+    if (value == null || Number.isNaN(value)) {
+      setText('');
+    } else {
+      setText(formatTlPlain(value));
+    }
+  }, [value, isFocused]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const nextText = e.target.value;
+    setText(nextText);
+
+    const parsed = parseTl(nextText);
+    if (parsed == null) {
+      onChange(null);
+    } else {
+      onChange(parsed);
+    }
   };
 
   const handleBlur = () => {
-    const parsed = parseTl(inputValue);
-    if (parsed === null) {
-      setInputValue('');
-    } else {
-      setInputValue(formatTlPlain(parsed));
+    setIsFocused(false);
+
+    const trimmed = text.trim();
+    if (!trimmed) {
+      onChange(null);
+      setText('');
+      return;
     }
+
+    const parsed = parseTl(trimmed);
+    if (parsed == null) return;
+
+    onChange(parsed);
+    setText(formatTlPlain(parsed));
+  };
+
+  const handleFocus = () => {
+    setIsFocused(true);
   };
 
   return (
     <input
-      className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-      value={inputValue}
-      onChange={(e) => handleChange(e.target.value)}
+      {...rest}
+      value={text}
+      onChange={handleChange}
       onBlur={handleBlur}
-      placeholder={placeholder}
+      onFocus={handleFocus}
+      inputMode="decimal"
     />
   );
-}
+};
+
+export default MoneyInput;
