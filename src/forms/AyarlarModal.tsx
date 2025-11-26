@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import FormRow from '../components/FormRow';
 import DateInput from '../components/DateInput';
 import MoneyInput from '../components/MoneyInput';
@@ -60,6 +60,13 @@ function nextCode(items: { kod: string }[], prefix: string) {
   }, 0);
   const next = String(max + 1).padStart(4, '0');
   return `${prefix}-${next}`;
+}
+
+function parseBoolean(raw: string, defaultValue: boolean) {
+  const val = (raw || '').trim().toLowerCase();
+  if (['false', '0', 'hayır', 'hayir'].includes(val)) return false;
+  if (['true', '1', 'evet'].includes(val)) return true;
+  return defaultValue;
 }
 
 export default function AyarlarModal(props: Props) {
@@ -160,6 +167,7 @@ export default function AyarlarModal(props: Props) {
 }
 
 function BankalarTab({ banks, setBanks, onDirty }: { banks: BankMaster[]; setBanks: (b: BankMaster[]) => void; onDirty: () => void }) {
+  const bankCsvInputRef = useRef<HTMLInputElement | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({
     bankaAdi: '',
@@ -168,6 +176,9 @@ function BankalarTab({ banks, setBanks, onDirty }: { banks: BankMaster[]; setBan
     iban: '',
     acilisBakiyesi: 0,
     aktifMi: true,
+    cekKarnesiVarMi: false,
+    posVarMi: false,
+    krediKartiVarMi: false,
   });
 
   useEffect(() => {
@@ -181,10 +192,23 @@ function BankalarTab({ banks, setBanks, onDirty }: { banks: BankMaster[]; setBan
           iban: bank.iban || '',
           acilisBakiyesi: bank.acilisBakiyesi,
           aktifMi: bank.aktifMi,
+          cekKarnesiVarMi: bank.cekKarnesiVarMi ?? false,
+          posVarMi: bank.posVarMi ?? false,
+          krediKartiVarMi: bank.krediKartiVarMi ?? false,
         });
       }
     } else {
-      setForm({ bankaAdi: '', kodu: '', hesapAdi: '', iban: '', acilisBakiyesi: 0, aktifMi: true });
+      setForm({
+        bankaAdi: '',
+        kodu: '',
+        hesapAdi: '',
+        iban: '',
+        acilisBakiyesi: 0,
+        aktifMi: true,
+        cekKarnesiVarMi: false,
+        posVarMi: false,
+        krediKartiVarMi: false,
+      });
     }
   }, [editingId, banks]);
 
@@ -194,7 +218,18 @@ function BankalarTab({ banks, setBanks, onDirty }: { banks: BankMaster[]; setBan
       setBanks(
         banks.map((b) =>
           b.id === editingId
-            ? { ...b, bankaAdi: form.bankaAdi, kodu: form.kodu, hesapAdi: form.hesapAdi, iban: form.iban, acilisBakiyesi: form.acilisBakiyesi || 0, aktifMi: form.aktifMi }
+            ? {
+                ...b,
+                bankaAdi: form.bankaAdi,
+                kodu: form.kodu,
+                hesapAdi: form.hesapAdi,
+                iban: form.iban,
+                acilisBakiyesi: form.acilisBakiyesi || 0,
+                aktifMi: form.aktifMi,
+                cekKarnesiVarMi: form.cekKarnesiVarMi,
+                posVarMi: form.posVarMi,
+                krediKartiVarMi: form.krediKartiVarMi,
+              }
             : b
         )
       );
@@ -209,6 +244,9 @@ function BankalarTab({ banks, setBanks, onDirty }: { banks: BankMaster[]; setBan
           iban: form.iban,
           acilisBakiyesi: form.acilisBakiyesi || 0,
           aktifMi: form.aktifMi,
+          cekKarnesiVarMi: form.cekKarnesiVarMi,
+          posVarMi: form.posVarMi,
+          krediKartiVarMi: form.krediKartiVarMi,
         },
       ]);
     }
@@ -218,23 +256,148 @@ function BankalarTab({ banks, setBanks, onDirty }: { banks: BankMaster[]; setBan
 
   const handleRemove = (id: string) => setBanks(banks.filter((b) => b.id !== id));
 
+  const downloadBankCsv = () => {
+    const header = [
+      'bankaAdi',
+      'kodu',
+      'hesapAdi',
+      'iban',
+      'acilisBakiyesi',
+      'aktifMi',
+      'cekKarnesiVarMi',
+      'posVarMi',
+      'krediKartiVarMi',
+    ].join(CSV_DELIMITER);
+    const lines = [
+      header,
+      ...banks.map((b) =>
+        [
+          b.bankaAdi,
+          b.kodu,
+          b.hesapAdi,
+          b.iban || '',
+          b.acilisBakiyesi,
+          b.aktifMi ? 'true' : 'false',
+          b.cekKarnesiVarMi ? 'true' : 'false',
+          b.posVarMi ? 'true' : 'false',
+          b.krediKartiVarMi ? 'true' : 'false',
+        ].join(CSV_DELIMITER)
+      ),
+    ];
+    const bom = '\uFEFF';
+    const csvContent = bom + lines.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'bankalar.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleBankCsvChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const raw = reader.result as string;
+      const text = raw.replace(/^\uFEFF/, '');
+      const lines = text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+      if (lines.length < 2) return;
+      const headerCols = lines[0].split(CSV_DELIMITER).map((h) => h.trim().toLowerCase());
+      const expected = [
+        'bankaadi',
+        'kodu',
+        'hesapadi',
+        'iban',
+        'acilisbakiyesi',
+        'aktifmi',
+        'cekkarnesivarmi',
+        'posvarmi',
+        'kredikartivarmi',
+      ];
+      if (headerCols.length < expected.length || expected.some((h, idx) => headerCols[idx] !== h)) {
+        alert(
+          'Geçersiz CSV formatı. Başlıklar bankaAdi,kodu,hesapAdi,iban,acilisBakiyesi,aktifMi,cekKarnesiVarMi,posVarMi,krediKartiVarMi olmalıdır.'
+        );
+        return;
+      }
+      const parsed = lines
+        .slice(1)
+        .map((line) => {
+          const cols = line.split(CSV_DELIMITER);
+          const bankaAdi = (cols[0] || '').trim();
+          const kodu = (cols[1] || '').trim();
+          const hesapAdi = (cols[2] || '').trim();
+          if (!bankaAdi && !kodu && !hesapAdi) return null;
+          const iban = (cols[3] || '').trim();
+          const acilisBakiyesi = parseFloat(cols[4] || '0') || 0;
+          const aktifMi = parseBoolean(cols[5] || '', true);
+          const cekKarnesiVarMi = parseBoolean(cols[6] || '', false);
+          const posVarMi = parseBoolean(cols[7] || '', false);
+          const krediKartiVarMi = parseBoolean(cols[8] || '', false);
+          return {
+            id: generateId(),
+            bankaAdi,
+            kodu,
+            hesapAdi,
+            iban,
+            acilisBakiyesi,
+            aktifMi,
+            cekKarnesiVarMi,
+            posVarMi,
+            krediKartiVarMi,
+          } as BankMaster;
+        })
+        .filter(Boolean) as BankMaster[];
+      setBanks(parsed);
+      onDirty();
+    };
+    reader.readAsText(file, 'UTF-8');
+    e.target.value = '';
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div className="max-h-96 overflow-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-slate-50">
-              <th className="text-left px-2 py-1">Adı</th>
-              <th className="text-left px-2 py-1">Kodu</th>
+      <div className="space-y-3">
+        <div className="flex items-center space-x-2">
+          <button className="text-sm px-3 py-2 rounded border bg-white" onClick={downloadBankCsv}>
+            CSV İndir
+          </button>
+          <button
+            className="text-sm px-3 py-2 rounded border bg-white"
+            onClick={() => bankCsvInputRef.current?.click()}
+          >
+            CSV Yükle
+          </button>
+          <input
+            ref={bankCsvInputRef}
+            type="file"
+            accept=".csv"
+            className="hidden"
+            onChange={handleBankCsvChange}
+          />
+        </div>
+        <div className="max-h-96 overflow-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50">
+                <th className="text-left px-2 py-1">Adı</th>
+                <th className="text-left px-2 py-1">Kodu</th>
               <th className="text-left px-2 py-1">Hesap</th>
               <th className="text-left px-2 py-1">Açılış</th>
               <th className="px-2 py-1" />
             </tr>
-          </thead>
-          <tbody>
-            {banks.map((b) => (
-              <tr key={b.id} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => setEditingId(b.id)}>
-                <td className="px-2 py-1">{b.bankaAdi}</td>
+            </thead>
+            <tbody>
+              {banks.map((b) => (
+                <tr key={b.id} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => setEditingId(b.id)}>
+                  <td className="px-2 py-1">{b.bankaAdi}</td>
                 <td className="px-2 py-1">{b.kodu}</td>
                 <td className="px-2 py-1">{b.hesapAdi}</td>
                 <td className="px-2 py-1 text-right">{b.acilisBakiyesi.toFixed(2)}</td>
@@ -244,9 +407,10 @@ function BankalarTab({ banks, setBanks, onDirty }: { banks: BankMaster[]; setBan
                   </button>
                 </td>
               </tr>
-            ))}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
       <div className="space-y-4">
         <div className="flex justify-between items-center">
@@ -270,6 +434,32 @@ function BankalarTab({ banks, setBanks, onDirty }: { banks: BankMaster[]; setBan
         <FormRow label="Açılış Bakiyesi">
           <MoneyInput className="input" value={form.acilisBakiyesi} onChange={(val) => setForm({ ...form, acilisBakiyesi: val || 0 })} />
         </FormRow>
+        <div className="flex flex-wrap gap-4 text-sm">
+          <label className="inline-flex items-center space-x-2">
+            <input
+              type="checkbox"
+              checked={form.cekKarnesiVarMi}
+              onChange={(e) => setForm({ ...form, cekKarnesiVarMi: e.target.checked })}
+            />
+            <span>Çek Karnesi Var</span>
+          </label>
+          <label className="inline-flex items-center space-x-2">
+            <input
+              type="checkbox"
+              checked={form.posVarMi}
+              onChange={(e) => setForm({ ...form, posVarMi: e.target.checked })}
+            />
+            <span>POS Var</span>
+          </label>
+          <label className="inline-flex items-center space-x-2">
+            <input
+              type="checkbox"
+              checked={form.krediKartiVarMi}
+              onChange={(e) => setForm({ ...form, krediKartiVarMi: e.target.checked })}
+            />
+            <span>Kredi Kartı Var</span>
+          </label>
+        </div>
         <label className="inline-flex items-center space-x-2 text-sm">
           <input type="checkbox" checked={form.aktifMi} onChange={(e) => setForm({ ...form, aktifMi: e.target.checked })} />
           <span>Aktif</span>
@@ -310,6 +500,8 @@ function PosTab({ banks, posTerminals, setPosTerminals, onDirty }: { banks: Bank
 
   const remove = (id: string) => setPosTerminals(posTerminals.filter((p) => p.id !== id));
 
+  const posBanks = banks.filter((b) => b.posVarMi || b.id === form.bankaId);
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div className="max-h-96 overflow-auto">
@@ -348,7 +540,7 @@ function PosTab({ banks, posTerminals, setPosTerminals, onDirty }: { banks: Bank
         <FormRow label="Banka" required>
           <select className="input" value={form.bankaId} onChange={(e) => setForm({ ...form, bankaId: e.target.value })}>
             <option value="">Seçiniz</option>
-            {banks.map((b) => (
+            {posBanks.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.hesapAdi}
               </option>
@@ -754,6 +946,8 @@ function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankM
 
   const remove = (id: string) => setCreditCards(creditCards.filter((c) => c.id !== id));
 
+  const cardBanks = banks.filter((b) => b.krediKartiVarMi || b.id === form.bankaId);
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div className="max-h-96 overflow-auto">
@@ -797,7 +991,7 @@ function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankM
         <FormRow label="Banka" required>
           <select className="input" value={form.bankaId} onChange={(e) => setForm({ ...form, bankaId: e.target.value })}>
             <option value="">Seçiniz</option>
-            {banks.map((b) => (
+            {cardBanks.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.hesapAdi}
               </option>

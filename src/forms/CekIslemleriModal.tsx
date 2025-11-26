@@ -591,7 +591,7 @@ export default function CekIslemleriModal({
                 >
                   <option value="">Seçiniz</option>
                   {cikisEligibleCheques.map((c) => {
-                    const counter = (c.lehtar || c.duzenleyen || '-').slice(0, 10);
+                    const counter = (c.duzenleyen || c.lehtar || '-').slice(0, 10);
                     return (
                       <option key={c.id} value={c.id}>
                         {`${c.cekNo} – ${counter} – ${formatTl(c.tutar)}`}

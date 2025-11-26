@@ -87,7 +87,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   const [openSection, setOpenSection] = useState<Record<string, boolean>>({});
   const [activeView, setActiveView] = useState<ActiveView>('DASHBOARD');
 
-const [banks, setBanks] = useState<BankMaster[]>([
+  const [banks, setBanks] = useState<BankMaster[]>([
     {
       id: generateId(),
       bankaAdi: 'Yapı Kredi',
@@ -96,6 +96,8 @@ const [banks, setBanks] = useState<BankMaster[]>([
       acilisBakiyesi: 0,
       aktifMi: true,
       cekKarnesiVarMi: true,
+      posVarMi: false,
+      krediKartiVarMi: false,
     },
     {
       id: generateId(),
@@ -105,6 +107,8 @@ const [banks, setBanks] = useState<BankMaster[]>([
       acilisBakiyesi: 0,
       aktifMi: true,
       cekKarnesiVarMi: true,
+      posVarMi: false,
+      krediKartiVarMi: false,
     },
     {
       id: generateId(),
@@ -114,6 +118,8 @@ const [banks, setBanks] = useState<BankMaster[]>([
       acilisBakiyesi: 0,
       aktifMi: true,
       cekKarnesiVarMi: false,
+      posVarMi: false,
+      krediKartiVarMi: false,
     },
   ]);
   const [posTerminals, setPosTerminals] = useState<PosTerminal[]>([]);
@@ -175,7 +181,7 @@ const [banks, setBanks] = useState<BankMaster[]>([
       });
 
     cheques
-      .filter((c) => c.tedarikciId && !c.kasaMi)
+      .filter((c) => c.tedarikciId)
       .filter((c) => ['KASADA', 'BANKADA_TAHSILDE', 'ODEMEDE'].includes(c.status))
       .forEach((cek) => {
         payments.push({
