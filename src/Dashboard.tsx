@@ -27,6 +27,7 @@ import AyarlarModal, { SettingsTabKey } from './forms/AyarlarModal';
 import EpostaLogsModal from './forms/EpostaLogsModal';
 import KullaniciAyarlarModal from './forms/KullaniciAyarlarModal';
 import KrediKartiIzlemeModal from './forms/KrediKartiIzlemeModal';
+import KasaDefteriView from './views/KasaDefteriView';
 
 const BASE_CASH_BALANCE = 0;
 
@@ -49,6 +50,8 @@ interface DashboardProps {
   currentUser: AppUser;
   onLogout: () => void;
 }
+
+type ActiveView = 'DASHBOARD' | 'KASA_DEFTERI';
 
 function recalcBalances(transactions: DailyTransaction[]): DailyTransaction[] {
   const sorted = [...transactions].sort((a, b) => {
@@ -82,6 +85,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   const [settingsTab, setSettingsTab] = useState<SettingsTabKey>('BANKALAR');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openSection, setOpenSection] = useState<Record<string, boolean>>({});
+  const [activeView, setActiveView] = useState<ActiveView>('DASHBOARD');
 
   const [banks, setBanks] = useState<BankMaster[]>([
     { id: generateId(), bankaAdi: 'Yapı Kredi', kodu: 'YKB', hesapAdi: 'YKB-Vadesiz TL', acilisBakiyesi: 0, aktifMi: true },
@@ -440,7 +444,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   return (
     <div className="flex min-h-screen bg-slate-100">
       <div
-        className={`fixed inset-y-0 left-0 w-72 bg-[#111827] text-white transform transition-transform duration-200 z-40 ${
+        className={`no-print fixed inset-y-0 left-0 w-72 bg-[#111827] text-white transform transition-transform duration-200 z-40 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         } lg:translate-x-0`}
       >
@@ -533,6 +537,14 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                       key={`${section.key}-${idx}`}
                       className="bg-[#1F2937] text-white px-3 py-2 rounded cursor-pointer hover:bg-[#111827]/70"
                       onClick={() => {
+                        if (item.label === 'Kasa Defteri') {
+                          setActiveView('KASA_DEFTERI');
+                          return;
+                        }
+                        if (item.label === 'Çek/Senet Modülü' || item.label === 'Diğer Raporlar') {
+                          alert('Henüz uygulanmadı');
+                          return;
+                        }
                         if (item.tab) setSettingsTab(item.tab as SettingsTabKey);
                         if (item.form) setOpenForm(item.form as OpenFormKey);
                       }}
@@ -548,7 +560,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       </div>
 
       <div className="flex-1 lg:ml-72 min-h-screen">
-        <div className="sticky top-0 z-30 bg-white border-b border-slate-200">
+        <div className="no-print sticky top-0 z-30 bg-white border-b border-slate-200">
           <div className="flex items-center justify-between px-4 py-3">
             <div className="flex items-center space-x-4">
               <button className="lg:hidden" onClick={() => setSidebarOpen(true)}>
@@ -577,145 +589,152 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           </div>
         </div>
 
-        <div className="p-4 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="card p-4">
-              <div className="text-sm font-semibold text-slate-600">Bankalar Toplamı</div>
-              <div className="text-3xl font-bold mt-2">{formatTl(totalBanksBalance)}</div>
-              <div className="mt-3 max-h-52 overflow-auto divide-y">
-                {banks.filter((b) => b.aktifMi).length === 0 && (
-                  <div className="py-2 text-sm text-slate-500">Tanımlı banka hesabı yok.</div>
-                )}
-                {banks
-                  .filter((b) => b.aktifMi)
-                  .map((b) => (
-                    <div key={b.id} className="flex justify-between py-2 text-sm">
-                      <span>{b.hesapAdi}</span>
-                      <span className="font-semibold">{formatTl((b.acilisBakiyesi || 0) + (bankDeltasById[b.id] || 0))}</span>
-                    </div>
-                  ))}
-              </div>
-            </div>
-            <div className="card p-4">
-              <div className="text-sm font-semibold text-slate-600">Ana Kasa Bakiyesi</div>
-              <div className="text-3xl font-bold mt-2">{formatTl(cashBalance)}</div>
-            </div>
-            <div className="card p-4">
-              <div className="text-sm font-semibold text-slate-600">Kasadaki Çekler</div>
-              <div className="mt-2 text-lg font-semibold">{chequesInCash.length} Adet</div>
-              <div className="text-2xl font-bold">{formatTl(chequesTotal)}</div>
-            </div>
-          </div>
-
-          <div className="card p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-lg font-semibold">Yaklaşan Ödemeler</div>
-                <div className="text-xs text-slate-500">Kredi kartı, kredi ve çek vadesi yaklaşan ödemeler</div>
-              </div>
-            </div>
-            <div className="mt-3 overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-[11px] uppercase text-slate-500">
-                  <tr>
-                    <th className="py-2 px-2 text-left">Tür</th>
-                    <th className="py-2 px-2 text-left">Banka</th>
-                    <th className="py-2 px-2 text-left">Adı</th>
-                    <th className="py-2 px-2 text-left">Vade</th>
-                    <th className="py-2 px-2 text-left">Ödenecek Tutar</th>
-                    <th className="py-2 px-2 text-left">Kalan Gün</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {upcomingPayments.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="py-3 text-center text-slate-500">
-                        Kayıt yok.
-                      </td>
-                    </tr>
+        {activeView === 'DASHBOARD' && (
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="card p-4">
+                <div className="text-sm font-semibold text-slate-600">Bankalar Toplamı</div>
+                <div className="text-3xl font-bold mt-2">{formatTl(totalBanksBalance)}</div>
+                <div className="mt-3 max-h-52 overflow-auto divide-y">
+                  {banks.filter((b) => b.aktifMi).length === 0 && (
+                    <div className="py-2 text-sm text-slate-500">Tanımlı banka hesabı yok.</div>
                   )}
-                  {upcomingPayments.map((p) => {
-                    let color = 'text-slate-700';
-                    if (p.daysLeft < 0) color = 'text-rose-600 font-semibold';
-                    else if (p.daysLeft <= globalSettings.yaklasanOdemeGun) color = 'text-amber-600 font-semibold';
-                    return (
-                      <tr key={p.id} className="border-b last:border-0">
-                        <td className="py-2 px-2">{p.category}</td>
-                        <td className="py-2 px-2">{p.bankName}</td>
-                        <td className="py-2 px-2">{p.name}</td>
-                        <td className="py-2 px-2">{p.dueDateDisplay}</td>
-                        <td className="py-2 px-2">{formatTl(p.amount)}</td>
-                        <td className={`py-2 px-2 ${color}`}>{p.daysLeft}</td>
+                  {banks
+                    .filter((b) => b.aktifMi)
+                    .map((b) => (
+                      <div key={b.id} className="flex justify-between py-2 text-sm">
+                        <span>{b.hesapAdi}</span>
+                        <span className="font-semibold">{formatTl((b.acilisBakiyesi || 0) + (bankDeltasById[b.id] || 0))}</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+              <div className="card p-4">
+                <div className="text-sm font-semibold text-slate-600">Ana Kasa Bakiyesi</div>
+                <div className="text-3xl font-bold mt-2">{formatTl(cashBalance)}</div>
+              </div>
+              <div className="card p-4">
+                <div className="text-sm font-semibold text-slate-600">Kasadaki Çekler</div>
+                <div className="mt-2 text-lg font-semibold">{chequesInCash.length} Adet</div>
+                <div className="text-2xl font-bold">{formatTl(chequesTotal)}</div>
+              </div>
+            </div>
+
+            <div className="card p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-lg font-semibold">Yaklaşan Ödemeler</div>
+                  <div className="text-xs text-slate-500">Kredi kartı, kredi ve çek vadesi yaklaşan ödemeler</div>
+                </div>
+              </div>
+              <div className="mt-3 overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-[11px] uppercase text-slate-500">
+                    <tr>
+                      <th className="py-2 px-2 text-left">Tür</th>
+                      <th className="py-2 px-2 text-left">Banka</th>
+                      <th className="py-2 px-2 text-left">Adı</th>
+                      <th className="py-2 px-2 text-left">Vade</th>
+                      <th className="py-2 px-2 text-left">Ödenecek Tutar</th>
+                      <th className="py-2 px-2 text-left">Kalan Gün</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {upcomingPayments.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="py-3 text-center text-slate-500">
+                          Kayıt yok.
+                        </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="card p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-lg font-semibold">Gün İçi İşlemler</div>
-              <div className="text-sm text-slate-600 flex items-center space-x-2">
-                <span>{todayDisplay}</span>
-                <span className="text-orange-500 capitalize">{weekday}</span>
+                    )}
+                    {upcomingPayments.map((p) => {
+                      let color = 'text-slate-700';
+                      if (p.daysLeft < 0) color = 'text-rose-600 font-semibold';
+                      else if (p.daysLeft <= globalSettings.yaklasanOdemeGun) color = 'text-amber-600 font-semibold';
+                      return (
+                        <tr key={p.id} className="border-b last:border-0">
+                          <td className="py-2 px-2">{p.category}</td>
+                          <td className="py-2 px-2">{p.bankName}</td>
+                          <td className="py-2 px-2">{p.name}</td>
+                          <td className="py-2 px-2">{p.dueDateDisplay}</td>
+                          <td className="py-2 px-2">{formatTl(p.amount)}</td>
+                          <td className={`py-2 px-2 ${color}`}>{p.daysLeft}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
-            <div className="overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-[11px] uppercase text-slate-500">
-                  <tr>
-                    <th className="py-2 px-2 text-left">Tarih</th>
-                    <th className="py-2 px-2 text-left">Belge No</th>
-                    <th className="py-2 px-2 text-left">Tür</th>
-                    <th className="py-2 px-2 text-left">Kaynak</th>
-                    <th className="py-2 px-2 text-left">Muhatap</th>
-                    <th className="py-2 px-2 text-left">Açıklama</th>
-                    <th className="py-2 px-2 text-right">Giriş</th>
-                    <th className="py-2 px-2 text-right">Çıkış</th>
-                    <th className="py-2 px-2 text-right">Bakiye</th>
-                    <th className="py-2 px-2 text-right">İşlem</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {todaysTransactions.length === 0 && (
+
+            <div className="card p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-lg font-semibold">Gün İçi İşlemler</div>
+                <div className="text-sm text-slate-600 flex items-center space-x-2">
+                  <span>{todayDisplay}</span>
+                  <span className="text-orange-500 capitalize">{weekday}</span>
+                </div>
+              </div>
+              <div className="overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-[11px] uppercase text-slate-500">
                     <tr>
-                      <td colSpan={10} className="py-3 text-center text-slate-500">
-                        Gün içi işlem yok.
-                      </td>
+                      <th className="py-2 px-2 text-left">Tarih</th>
+                      <th className="py-2 px-2 text-left">Belge No</th>
+                      <th className="py-2 px-2 text-left">Tür</th>
+                      <th className="py-2 px-2 text-left">Kaynak</th>
+                      <th className="py-2 px-2 text-left">Muhatap</th>
+                      <th className="py-2 px-2 text-left">Açıklama</th>
+                      <th className="py-2 px-2 text-right">Giriş</th>
+                      <th className="py-2 px-2 text-right">Çıkış</th>
+                      <th className="py-2 px-2 text-right">Bakiye</th>
+                      <th className="py-2 px-2 text-right">İşlem</th>
                     </tr>
-                  )}
-                  {todaysTransactions.map((tx) => (
-                    <tr key={tx.id} className="border-b last:border-0">
-                      <td className="py-2 px-2">{tx.displayDate}</td>
-                      <td className="py-2 px-2">{tx.documentNo}</td>
-                      <td className="py-2 px-2">{tx.type}</td>
-                      <td className="py-2 px-2">{tx.source}</td>
-                      <td className="py-2 px-2">{tx.counterparty}</td>
-                      <td className="py-2 px-2">{tx.description}</td>
-                      <td className="py-2 px-2 text-right text-emerald-600">
-                        {tx.displayIncoming !== undefined ? formatTl(tx.displayIncoming) : tx.incoming ? formatTl(tx.incoming) : '-'}
-                      </td>
-                      <td className="py-2 px-2 text-right text-rose-600">
-                        {tx.displayOutgoing !== undefined ? formatTl(tx.displayOutgoing) : tx.outgoing ? formatTl(tx.outgoing) : '-'}
-                      </td>
-                      <td className="py-2 px-2 text-right font-semibold">{formatTl(tx.balanceAfter)}</td>
-                      <td className="py-2 px-2 text-right">
-                        <button
-                          className="text-rose-600 hover:underline"
-                          onClick={() => removeTransaction(tx.id)}
-                        >
-                          Sil
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {todaysTransactions.length === 0 && (
+                      <tr>
+                        <td colSpan={10} className="py-3 text-center text-slate-500">
+                          Gün içi işlem yok.
+                        </td>
+                      </tr>
+                    )}
+                    {todaysTransactions.map((tx) => (
+                      <tr key={tx.id} className="border-b last:border-0">
+                        <td className="py-2 px-2">{tx.displayDate}</td>
+                        <td className="py-2 px-2">{tx.documentNo}</td>
+                        <td className="py-2 px-2">{tx.type}</td>
+                        <td className="py-2 px-2">{tx.source}</td>
+                        <td className="py-2 px-2">{tx.counterparty}</td>
+                        <td className="py-2 px-2">{tx.description}</td>
+                        <td className="py-2 px-2 text-right text-emerald-600">
+                          {tx.displayIncoming !== undefined ? formatTl(tx.displayIncoming) : tx.incoming ? formatTl(tx.incoming) : '-'}
+                        </td>
+                        <td className="py-2 px-2 text-right text-rose-600">
+                          {tx.displayOutgoing !== undefined ? formatTl(tx.displayOutgoing) : tx.outgoing ? formatTl(tx.outgoing) : '-'}
+                        </td>
+                        <td className="py-2 px-2 text-right font-semibold">{formatTl(tx.balanceAfter)}</td>
+                        <td className="py-2 px-2 text-right">
+                          <button
+                            className="text-rose-600 hover:underline"
+                            onClick={() => removeTransaction(tx.id)}
+                          >
+                            Sil
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
+        )}
+        {activeView === 'KASA_DEFTERI' && (
+          <div className="p-4">
+            <KasaDefteriView transactions={dailyTransactions} onBackToDashboard={() => setActiveView('DASHBOARD')} />
+          </div>
+        )}
       </div>
 
       <NakitGiris

@@ -30,3 +30,17 @@ label {
 button {
   @apply transition-colors;
 }
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  .print-area {
+    display: block !important;
+  }
+
+  body {
+    background: white;
+  }
+}
