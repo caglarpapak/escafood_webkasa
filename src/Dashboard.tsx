@@ -187,6 +187,12 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   const chequesInCash = cheques.filter((c) => c.status === 'KASADA');
   const chequesTotal = chequesInCash.reduce((sum, c) => sum + c.tutar, 0);
 
+  const today = todayIso();
+  const todaysTransactions = useMemo(
+    () => dailyTransactions.filter((tx) => tx.isoDate === today),
+    [dailyTransactions, today]
+  );
+
   const toggleSection = (key: string) => {
     setOpenSection((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -197,6 +203,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
 
   const handleNakitGirisSaved = (values: NakitGirisFormValues) => {
     const documentNo = getNextBelgeNo('NKT-GRS', values.islemTarihiIso, dailyTransactions);
+    const nowIso = new Date().toISOString();
     const tx: DailyTransaction = {
       id: generateId(),
       isoDate: values.islemTarihiIso,
@@ -212,6 +219,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       bankId: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? values.bankaId : undefined,
       bankDelta: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? -values.tutar : undefined,
       displayIncoming: values.tutar,
+      createdAtIso: nowIso,
+      createdBy: currentUser.email,
     };
     addTransactions([tx]);
     setOpenForm(null);
@@ -219,6 +228,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
 
   const handleNakitCikisSaved = (values: NakitCikisFormValues) => {
     const documentNo = getNextBelgeNo('NKT-CKS', values.islemTarihiIso, dailyTransactions);
+    const nowIso = new Date().toISOString();
     const supplierName =
       values.muhatapId && suppliers.find((s) => s.id === values.muhatapId)
         ? (() => {
@@ -242,6 +252,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       bankId: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? values.bankaId : undefined,
       bankDelta: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? values.tutar : undefined,
       displayOutgoing: values.tutar,
+      createdAtIso: nowIso,
+      createdBy: currentUser.email,
     };
     addTransactions([tx]);
     setOpenForm(null);
@@ -249,6 +261,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
 
   const handleBankaNakitGirisSaved = (values: BankaNakitGirisFormValues) => {
     const documentNo = getNextBelgeNo('BNK-GRS', values.islemTarihiIso, dailyTransactions);
+    const nowIso = new Date().toISOString();
     const foundCustomer = values.muhatapId ? customers.find((c) => c.id === values.muhatapId) : undefined;
     const foundSupplier = values.muhatapId ? suppliers.find((s) => s.id === values.muhatapId) : undefined;
     const counterparty =
@@ -271,6 +284,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       bankId: values.bankaId,
       bankDelta: values.tutar,
       displayIncoming: values.tutar,
+      createdAtIso: nowIso,
+      createdBy: currentUser.email,
     };
     if (values.islemTuru === 'CEK_TAHSILATI' && values.cekId) {
       setCheques((prev) => prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_OLDU' } : c)));
@@ -286,6 +301,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         ...dailyTransactions,
         { documentNo: documentNoCks } as DailyTransaction,
       ]);
+      const nowIso = new Date().toISOString();
       const outTx: DailyTransaction = {
         id: generateId(),
         isoDate: values.islemTarihiIso,
@@ -301,6 +317,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         bankId: values.bankaId,
         bankDelta: -values.tutar,
         displayOutgoing: values.tutar,
+        createdAtIso: nowIso,
+        createdBy: currentUser.email,
       };
       const inTx: DailyTransaction = {
         id: generateId(),
@@ -317,10 +335,13 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         bankId: values.hedefBankaId,
         bankDelta: values.tutar,
         displayIncoming: values.tutar,
+        createdAtIso: nowIso,
+        createdBy: currentUser.email,
       };
       addTransactions([outTx, inTx]);
     } else {
       const documentNo = getNextBelgeNo('BNK-CKS', values.islemTarihiIso, dailyTransactions);
+      const nowIso = new Date().toISOString();
       let tutar = values.tutar;
       let aciklama = values.aciklama || '';
 
@@ -353,6 +374,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         bankId: values.bankaId,
         bankDelta: -tutar,
         displayOutgoing: tutar,
+        createdAtIso: nowIso,
+        createdBy: currentUser.email,
       };
       if (values.islemTuru === 'CEK_ODEME' && values.cekId) {
         setCheques((prev) => prev.map((c) => (c.id === values.cekId ? { ...c, status: 'ODEME_YAPILDI' } : c)));
@@ -364,6 +387,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
 
   const handlePosTahsilatSaved = (values: PosTahsilatFormValues) => {
     const documentNo = getNextBelgeNo('BNK-GRS', values.islemTarihiIso, dailyTransactions);
+    const nowIso = new Date().toISOString();
     const tx: DailyTransaction = {
       id: generateId(),
       isoDate: values.islemTarihiIso,
@@ -379,6 +403,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       bankId: values.bankaId,
       bankDelta: values.netTutar,
       displayIncoming: values.netTutar,
+      createdAtIso: nowIso,
+      createdBy: currentUser.email,
     };
     addTransactions([tx]);
     setOpenForm(null);
@@ -408,8 +434,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     setDailyTransactions((prev) => recalcBalances(prev.filter((t) => t.id !== id)));
   };
 
-  const todayDisplay = isoToDisplay(todayIso());
-  const weekday = getWeekdayTr(todayIso());
+  const todayDisplay = isoToDisplay(today);
+  const weekday = getWeekdayTr(today);
 
   return (
     <div className="flex min-h-screen bg-slate-100">
@@ -653,14 +679,14 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {dailyTransactions.length === 0 && (
+                  {todaysTransactions.length === 0 && (
                     <tr>
                       <td colSpan={10} className="py-3 text-center text-slate-500">
                         Gün içi işlem yok.
                       </td>
                     </tr>
                   )}
-                  {dailyTransactions.map((tx) => (
+                  {todaysTransactions.map((tx) => (
                     <tr key={tx.id} className="border-b last:border-0">
                       <td className="py-2 px-2">{tx.displayDate}</td>
                       <td className="py-2 px-2">{tx.documentNo}</td>

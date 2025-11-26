@@ -14,4 +14,7 @@ export interface DailyTransaction {
   bankDelta?: number;
   displayIncoming?: number;
   displayOutgoing?: number;
+
+  createdAtIso?: string;
+  createdBy?: string;
 }

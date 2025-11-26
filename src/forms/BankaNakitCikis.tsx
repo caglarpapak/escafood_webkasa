@@ -96,7 +96,16 @@ export default function BankaNakitCikis({ isOpen, onClose, onSaved, currentUserE
     if (muhatapRequired && muhatap.trim().length < 3) return;
     if (faturaRequired && !faturaMuhatabi) return;
     if (hedefRequired && !hedefBankaId) return;
-    if (!window.confirm('Bu işlemi kaydetmek istediğinize emin misiniz?')) return;
+    const today = todayIso();
+    if (islemTarihiIso > today) {
+      alert('Gelecek tarihli işlem kaydedilemez.');
+      return;
+    }
+    let message = 'Bu işlemi kaydetmek istediğinize emin misiniz?';
+    if (islemTarihiIso < today) {
+      message = `${message}\n\nDİKKAT: Bu işlem geçmiş tarihli olduğu için Gün İçi İşlemler tablosunda görünmeyecek, sadece Raporlar → Kasa Defteri ekranında listelenecek.`;
+    }
+    if (!window.confirm(message)) return;
     onSaved({
       islemTarihiIso,
       bankaId,

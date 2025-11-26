@@ -90,9 +90,14 @@ export default function BankaNakitGiris({
   const handleSave = () => {
     if (!islemTarihiIso || !bankaId || !islemTuru || !tutar || tutar <= 0) return;
     if (muhatapRequired && !muhatap) return;
+    const today = todayIso();
+    if (islemTarihiIso > today) {
+      alert('Gelecek tarihli işlem kaydedilemez.');
+      return;
+    }
     const muhatapLabel = muhatap || '-';
     const bankaName = banks.find((b) => b.id === bankaId)?.hesapAdi || '-';
-    const message = [
+    const baseMessage = [
       'Banka nakit giriş kaydedilsin mi?',
       '',
       `Tarih: ${isoToDisplay(islemTarihiIso)}`,
@@ -102,6 +107,11 @@ export default function BankaNakitGiris({
       `Tutar: ${formatTl(tutar)}`,
       `Açıklama: ${aciklama || '-'}`,
     ].join('\n');
+    const warning =
+      islemTarihiIso < today
+        ? '\nDİKKAT: Bu işlem geçmiş tarihli olduğu için Gün İçi İşlemler tablosunda görünmeyecek, sadece Raporlar → Kasa Defteri ekranında listelenecek.'
+        : '';
+    const message = `${baseMessage}${warning}`;
     if (!window.confirm(message)) return;
     onSaved({
       islemTarihiIso,

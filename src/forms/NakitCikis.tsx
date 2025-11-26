@@ -76,8 +76,13 @@ export default function NakitCikis({ isOpen, onClose, onSaved, currentUserEmail,
     if (!islemTarihiIso || !kaynak || !tutar || tutar <= 0) return;
     if (muhatapRequired && !muhatap) return;
     if (bankaRequired && !bankaId) return;
+    const today = todayIso();
+    if (islemTarihiIso > today) {
+      alert('Gelecek tarihli işlem kaydedilemez.');
+      return;
+    }
     const kaynakLabel = kaynakOptions.find((k) => k.value === kaynak)?.label || '';
-    const message = [
+    const baseMessage = [
       'Nakit çıkış kaydedilsin mi?',
       '',
       `Tarih: ${isoToDisplay(islemTarihiIso)}`,
@@ -86,6 +91,11 @@ export default function NakitCikis({ isOpen, onClose, onSaved, currentUserEmail,
       `Tutar: ${formatTl(tutar)}`,
       `Açıklama: ${aciklama || '-'}`,
     ].join('\n');
+    const warning =
+      islemTarihiIso < today
+        ? '\nDİKKAT: Bu işlem geçmiş tarihli olduğu için Gün İçi İşlemler tablosunda görünmeyecek, sadece Raporlar → Kasa Defteri ekranında listelenecek.'
+        : '';
+    const message = `${baseMessage}${warning}`;
     if (!window.confirm(message)) return;
     onSaved({
       islemTarihiIso,
