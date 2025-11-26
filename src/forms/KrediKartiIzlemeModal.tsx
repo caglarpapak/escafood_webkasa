@@ -15,12 +15,30 @@ interface Props {
 
 export default function KrediKartiIzlemeModal({ isOpen, onClose, creditCards, banks, globalSettings }: Props) {
   const rows = useMemo(() => {
-    return creditCards.map((card) => {
-      const bank = banks.find((b) => b.id === card.bankaId);
-      const dueIso = todayIso();
-      const daysLeft = diffInDays(todayIso(), dueIso);
-      return { card, bankName: bank?.bankaAdi || '-', daysLeft, dueDateDisplay: isoToDisplay(dueIso) };
-    });
+    const today = todayIso();
+    return creditCards
+      .filter((card) => card.aktifMi && card.sonEkstreBorcu > 0)
+      .map((card) => {
+        const bank = banks.find((b) => b.id === card.bankaId);
+        const [year, month] = today.split('-').map((n) => Number(n));
+        const currentMonthDue = new Date(Date.UTC(year, (month || 1) - 1, card.sonOdemeGunu));
+        const dueDate = currentMonthDue >= new Date(`${today}T00:00:00Z`)
+          ? currentMonthDue
+          : new Date(Date.UTC(year, (month || 1), card.sonOdemeGunu));
+        const dueIso = dueDate.toISOString().slice(0, 10);
+        const daysLeft = diffInDays(today, dueIso);
+        const limit = card.limit ?? card.kartLimit ?? 0;
+        const available =
+          card.kullanilabilirLimit ?? (limit - (card.guncelBorc || 0));
+        return {
+          card,
+          bankName: bank?.bankaAdi || '-',
+          daysLeft,
+          dueDateDisplay: isoToDisplay(dueIso),
+          limit,
+          available,
+        };
+      });
   }, [creditCards, banks]);
 
   if (!isOpen) return null;
@@ -55,18 +73,17 @@ export default function KrediKartiIzlemeModal({ isOpen, onClose, creditCards, ba
                   </td>
                 </tr>
               )}
-              {rows.map(({ card, bankName, daysLeft, dueDateDisplay }) => {
+              {rows.map(({ card, bankName, daysLeft, dueDateDisplay, limit, available }) => {
                 let color = 'text-slate-700';
                 if (daysLeft < 0) color = 'text-rose-600 font-semibold';
                 else if (daysLeft <= globalSettings.yaklasanOdemeGun) color = 'text-amber-600 font-semibold';
-                const kullanilabilir = card.kartLimit - card.guncelBorc;
                 return (
                   <tr key={card.id} className="border-b last:border-0">
                     <td className="py-2 px-2">{card.kartAdi}</td>
                     <td className="py-2 px-2">{bankName}</td>
-                    <td className="py-2 px-2">{formatTl(card.kartLimit)}</td>
+                    <td className="py-2 px-2">{formatTl(limit)}</td>
                     <td className="py-2 px-2">{formatTl(card.guncelBorc)}</td>
-                    <td className="py-2 px-2">{formatTl(kullanilabilir)}</td>
+                    <td className="py-2 px-2">{formatTl(available)}</td>
                     <td className="py-2 px-2">{formatTl(card.sonEkstreBorcu)}</td>
                     <td className="py-2 px-2">{card.hesapKesimGunu}</td>
                     <td className="py-2 px-2">{card.sonOdemeGunu}</td>

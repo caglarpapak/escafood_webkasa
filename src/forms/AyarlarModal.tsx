@@ -903,6 +903,8 @@ function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankM
     kartAdi: '',
     bankaId: '',
     kartLimit: 0,
+    limit: 0,
+    kullanilabilirLimit: 0,
     asgariOran: 0.4,
     hesapKesimGunu: 1,
     sonOdemeGunu: 1,
@@ -915,13 +917,22 @@ function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankM
   useEffect(() => {
     if (editingId) {
       const card = creditCards.find((c) => c.id === editingId);
-      if (card) setForm(card);
+      if (card)
+        setForm({
+          ...card,
+          kartLimit: card.kartLimit ?? card.limit ?? 0,
+          limit: card.limit ?? card.kartLimit ?? 0,
+          kullanilabilirLimit:
+            card.kullanilabilirLimit ?? (card.limit ?? card.kartLimit ?? 0) - (card.guncelBorc || 0),
+        });
     } else {
       setForm({
         id: '',
         kartAdi: '',
         bankaId: '',
         kartLimit: 0,
+        limit: 0,
+        kullanilabilirLimit: 0,
         asgariOran: 0.4,
         hesapKesimGunu: 1,
         sonOdemeGunu: 1,
@@ -935,10 +946,18 @@ function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankM
 
   const save = () => {
     if (!form.kartAdi || !form.bankaId) return;
+    const limit = form.limit ?? form.kartLimit ?? 0;
+    const prepared = {
+      ...form,
+      kartLimit: form.kartLimit ?? limit,
+      limit,
+      kullanilabilirLimit:
+        form.kullanilabilirLimit ?? (limit - (form.guncelBorc || 0)),
+    };
     if (editingId) {
-      setCreditCards(creditCards.map((c) => (c.id === editingId ? { ...form, id: editingId } : c)));
+      setCreditCards(creditCards.map((c) => (c.id === editingId ? { ...prepared, id: editingId } : c)));
     } else {
-      setCreditCards([...creditCards, { ...form, id: generateId() }]);
+      setCreditCards([...creditCards, { ...prepared, id: generateId() }]);
     }
     setEditingId(null);
     onDirty();

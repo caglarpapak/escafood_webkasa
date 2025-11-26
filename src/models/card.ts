@@ -1,8 +1,10 @@
 export interface CreditCard {
   id: string;
-  kartAdi: string;
   bankaId: string;
+  kartAdi: string;
   kartLimit: number;
+  limit: number;
+  kullanilabilirLimit: number;
   asgariOran: number;
   hesapKesimGunu: number;
   sonOdemeGunu: number;

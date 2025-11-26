@@ -195,6 +195,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           daysLeft: diffInDays(today, cek.vadeTarihi),
         });
       });
+    payments.sort((a, b) => a.daysLeft - b.daysLeft);
     setUpcomingPayments(payments);
   }, [banks, creditCards, loans, cheques]);
 
@@ -526,9 +527,9 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
               color: 'bg-purple-700',
               key: 'kart',
               items: [
-                { label: 'POS Tahsilat', form: 'POS_TAHSILAT' },
-                { label: 'Kredi Kartı Tedarikçi Ödemesi', form: 'KK_TEDARIKCI' },
-                { label: 'Kredi Kartı Masraf Ödemesi', form: 'KK_MASRAF' },
+                { label: 'POS Tahsilat İşlemi', form: 'POS_TAHSILAT' },
+                { label: 'Kredi Kartı ile Tedarikçiye Ödeme', form: 'KK_TEDARIKCI' },
+                { label: 'Kredi Kartı ile Masraf İşlemi', form: 'KK_MASRAF' },
                 { label: 'Kredi Kartı İzleme', form: 'KK_IZLEME' },
               ],
             },
