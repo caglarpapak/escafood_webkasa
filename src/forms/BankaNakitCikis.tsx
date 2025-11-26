@@ -39,7 +39,7 @@ interface Props {
   onSaved: (values: BankaNakitCikisFormValues) => void;
   currentUserEmail: string;
   banks: BankMaster[];
-  cheques?: Cheque[];
+  cheques: Cheque[];
   creditCards: CreditCard[];
 }
 
@@ -69,10 +69,10 @@ export default function BankaNakitCikis({
   onSaved,
   currentUserEmail,
   banks,
-  cheques = [],
+  cheques,
   creditCards,
 }: Props) {
-  const chequeList = cheques || [];
+  const chequeListSafe: Cheque[] = Array.isArray(cheques) ? cheques : [];
   const [islemTarihiIso, setIslemTarihiIso] = useState(todayIso());
   const [bankaId, setBankaId] = useState('');
   const [hedefBankaId, setHedefBankaId] = useState('');
@@ -86,8 +86,11 @@ export default function BankaNakitCikis({
   const [cardId, setCardId] = useState('');
 
   const eligibleCheques = useMemo(
-    () => chequeList.filter((c) => c.tedarikciId && (c.status === 'ODEMEDE' || c.status === 'BANKADA_TAHSILDE')),
-    [chequeList]
+    () =>
+      chequeListSafe.filter(
+        (c) => c.tedarikciId && (c.status === 'ODEMEDE' || c.status === 'BANKADA_TAHSILDE')
+      ),
+    [chequeListSafe]
   );
 
   const eligibleCards = useMemo(
@@ -329,7 +332,7 @@ export default function BankaNakitCikis({
                 }}
               >
                 <option value="">Seçiniz</option>
-                {eligibleCheques.map((c) => (
+                {(eligibleCheques ?? []).map((c) => (
                   <option key={c.id} value={c.id}>
                     {`${c.cekNo} - ${c.lehtar} (${formatTl(c.tutar)})`}
                   </option>
