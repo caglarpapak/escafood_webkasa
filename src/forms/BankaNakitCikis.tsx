@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BankMaster } from '../models/bank';
-import { parseTl } from '../utils/money';
-import { todayIso } from '../utils/date';
+import { formatTl, parseTl } from '../utils/money';
+import { isoToDisplay, todayIso } from '../utils/date';
 
 export type BankaNakitCikisTuru =
   | 'VIRMAN'
@@ -101,11 +101,23 @@ export default function BankaNakitCikis({ isOpen, onClose, onSaved, currentUserE
       alert('Gelecek tarihli işlem kaydedilemez.');
       return;
     }
-    let message = 'Bu işlemi kaydetmek istediğinize emin misiniz?';
+    const bankaName = banks.find((b) => b.id === bankaId)?.hesapAdi || '-';
+    const hedefName = hedefBankaId ? banks.find((b) => b.id === hedefBankaId)?.hesapAdi || '-' : null;
+    const lines = [
+      'Banka nakit çıkış kaydedilsin mi?',
+      '',
+      `Tarih: ${isoToDisplay(islemTarihiIso)}`,
+      `Banka: ${bankaName}`,
+      hedefName ? `Hedef Banka: ${hedefName}` : null,
+      `İşlem Türü: ${turLabels[islemTuru]}`,
+      `Muhatap: ${muhatap || '-'}`,
+      `Tutar: ${formatTl(tutar)}`,
+      `Açıklama: ${aciklama || '-'}`,
+    ].filter(Boolean) as string[];
     if (islemTarihiIso < today) {
-      message = `${message}\n\nDİKKAT: Bu işlem geçmiş tarihli olduğu için Gün İçi İşlemler tablosunda görünmeyecek, sadece Raporlar → Kasa Defteri ekranında listelenecek.`;
+      lines.push("UYARI: Geçmiş tarihli bir işlem kaydediyorsunuz. Bu işlem sadece Kasa Defteri'nde görünecektir.");
     }
-    if (!window.confirm(message)) return;
+    if (!window.confirm(lines.join('\n'))) return;
     onSaved({
       islemTarihiIso,
       bankaId,

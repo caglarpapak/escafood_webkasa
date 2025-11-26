@@ -95,7 +95,12 @@ export default function BankaNakitGiris({
       alert('Gelecek tarihli işlem kaydedilemez.');
       return;
     }
-    const muhatapLabel = muhatap || '-';
+    const sourceList = islemTuru === 'TEDARIKCI_EFT' ? suppliers : customers;
+    const selected = muhatapId ? sourceList.find((m) => m.id === muhatapId) : undefined;
+    const muhatapLabel =
+      (selected && `${selected.kod} - ${selected.ad}`) ||
+      muhatap ||
+      '-';
     const bankaName = banks.find((b) => b.id === bankaId)?.hesapAdi || '-';
     const baseMessage = [
       'Banka nakit giriş kaydedilsin mi?',
@@ -109,7 +114,7 @@ export default function BankaNakitGiris({
     ].join('\n');
     const warning =
       islemTarihiIso < today
-        ? '\nDİKKAT: Bu işlem geçmiş tarihli olduğu için Gün İçi İşlemler tablosunda görünmeyecek, sadece Raporlar → Kasa Defteri ekranında listelenecek.'
+        ? "\nUYARI: Geçmiş tarihli bir işlem kaydediyorsunuz. Bu işlem sadece Kasa Defteri'nde görünecektir."
         : '';
     const message = `${baseMessage}${warning}`;
     if (!window.confirm(message)) return;

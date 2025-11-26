@@ -208,6 +208,9 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   const handleNakitGirisSaved = (values: NakitGirisFormValues) => {
     const documentNo = getNextBelgeNo('NKT-GRS', values.islemTarihiIso, dailyTransactions);
     const nowIso = new Date().toISOString();
+    const foundCustomer = values.muhatapId ? customers.find((c) => c.id === values.muhatapId) : undefined;
+    const counterparty =
+      (foundCustomer && `${foundCustomer.kod} - ${foundCustomer.ad}`) || values.muhatap || 'Diğer';
     const tx: DailyTransaction = {
       id: generateId(),
       isoDate: values.islemTarihiIso,
@@ -215,7 +218,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       documentNo,
       type: 'Nakit Giriş',
       source: values.kaynak,
-      counterparty: values.muhatap || 'Diğer',
+      counterparty,
       description: values.aciklama || '',
       incoming: values.tutar,
       outgoing: 0,
@@ -233,14 +236,9 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   const handleNakitCikisSaved = (values: NakitCikisFormValues) => {
     const documentNo = getNextBelgeNo('NKT-CKS', values.islemTarihiIso, dailyTransactions);
     const nowIso = new Date().toISOString();
-    const supplierName =
-      values.muhatapId && suppliers.find((s) => s.id === values.muhatapId)
-        ? (() => {
-            const s = suppliers.find((sup) => sup.id === values.muhatapId)!;
-            return `${s.kod} - ${s.ad}`;
-          })()
-        : undefined;
-    const counterparty = supplierName || values.muhatap || 'Diğer';
+    const foundSupplier = values.muhatapId ? suppliers.find((s) => s.id === values.muhatapId) : undefined;
+    const counterparty =
+      (foundSupplier && `${foundSupplier.kod} - ${foundSupplier.ad}`) || values.muhatap || 'Diğer';
     const tx: DailyTransaction = {
       id: generateId(),
       isoDate: values.islemTarihiIso,
