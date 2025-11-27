@@ -3,7 +3,7 @@ import { CreditCard } from '../models/card';
 import { BankMaster } from '../models/bank';
 import { GlobalSettings } from '../models/settings';
 import { formatTl } from '../utils/money';
-import { diffInDays, todayIso, isoToDisplay } from '../utils/date';
+import { getCreditCardNextDue } from '../utils/creditCard';
 
 interface Props {
   isOpen: boolean;
@@ -15,25 +15,19 @@ interface Props {
 
 export default function KrediKartiIzlemeModal({ isOpen, onClose, creditCards, banks, globalSettings }: Props) {
   const rows = useMemo(() => {
-    const today = todayIso();
-    const todayDate = new Date(`${today}T00:00:00`);
     return creditCards
-      .filter((card) => card.aktifMi && card.sonEkstreBorcu > 0)
+      .filter((card) => card.aktifMi)
       .map((card) => {
         const bank = banks.find((b) => b.id === card.bankaId);
-        const year = todayDate.getFullYear();
-        const month = todayDate.getMonth();
-        const dueCurrent = new Date(year, month, card.sonOdemeGunu);
-        const dueDate = dueCurrent >= todayDate ? dueCurrent : new Date(year, month + 1, card.sonOdemeGunu);
-        const dueIso = dueDate.toISOString().slice(0, 10);
-        const daysLeft = diffInDays(today, dueIso);
+        const { daysLeft, dueDisplay } = getCreditCardNextDue(card);
         const limit = card.limit ?? card.kartLimit ?? 0;
-        const available = card.kullanilabilirLimit ?? limit - (card.guncelBorc || 0);
+        const guncelBorc = card.guncelBorc || 0;
+        const available = limit - guncelBorc;
         return {
           card,
           bankName: bank?.bankaAdi || '-',
           daysLeft,
-          dueDateDisplay: isoToDisplay(dueIso),
+          dueDateDisplay: dueDisplay,
           limit,
           available,
         };

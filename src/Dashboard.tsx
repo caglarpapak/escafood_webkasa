@@ -15,6 +15,7 @@ import { formatTl } from './utils/money';
 import { getNextBelgeNo } from './utils/documentNo';
 import { generateId } from './utils/id';
 import { buildLoanSchedule } from './utils/loan';
+import { getCreditCardNextDue } from './utils/creditCard';
 import NakitGiris, { NakitGirisFormValues } from './forms/NakitGiris';
 import NakitCikis, { NakitCikisFormValues } from './forms/NakitCikis';
 import BankaNakitGiris, { BankaNakitGirisFormValues } from './forms/BankaNakitGiris';
@@ -145,21 +146,16 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       .filter((c) => c.sonEkstreBorcu > 0)
       .filter((card) => banks.find((b) => b.id === card.bankaId)?.krediKartiVarMi)
       .forEach((card) => {
-        const todayDate = new Date(`${today}T00:00:00Z`);
-        const year = todayDate.getUTCFullYear();
-        const month = todayDate.getUTCMonth();
-        const dueThisMonth = new Date(Date.UTC(year, month, card.sonOdemeGunu));
-        const dueDate = dueThisMonth >= todayDate ? dueThisMonth : new Date(Date.UTC(year, month + 1, card.sonOdemeGunu));
-        const dueIso = dueDate.toISOString().slice(0, 10);
+        const { dueIso, dueDisplay, daysLeft } = getCreditCardNextDue(card);
         payments.push({
           id: `cc-${card.id}`,
           category: 'KREDI_KARTI',
           bankName: banks.find((b) => b.id === card.bankaId)?.bankaAdi || '-',
           name: card.kartAdi,
           dueDateIso: dueIso,
-          dueDateDisplay: isoToDisplay(dueIso),
+          dueDateDisplay: dueDisplay,
           amount: card.sonEkstreBorcu,
-          daysLeft: diffInDays(today, dueIso),
+          daysLeft,
         });
       });
 
@@ -441,7 +437,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           counterparty: card.kartAdi,
           description: values.aciklama || '',
           incoming: 0,
-          outgoing: values.tutar,
+          outgoing: 0,
           balanceAfter: 0,
           bankId: values.bankaId,
           bankDelta: -values.tutar,

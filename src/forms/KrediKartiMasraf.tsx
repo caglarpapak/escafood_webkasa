@@ -61,8 +61,15 @@ export default function KrediKartiMasraf({
   const safeBanks = banks ?? [];
   const safeCards = creditCards ?? [];
 
-  const eligibleCards = useMemo(
-    () => safeCards.filter((c) => safeBanks.find((b) => b.id === c.bankaId)?.krediKartiVarMi),
+  const cardOptions = useMemo(
+    () =>
+      safeCards
+        .filter((c) => c.aktifMi)
+        .map((c) => {
+          const bank = safeBanks.find((b) => b.id === c.bankaId);
+          const bankName = bank ? bank.bankaAdi : '-';
+          return { id: c.id, label: `${bankName} - ${c.kartAdi}` };
+        }),
     [safeBanks, safeCards]
   );
 
@@ -86,7 +93,7 @@ export default function KrediKartiMasraf({
   };
 
   const handleSave = () => {
-    const selectedCard = eligibleCards.find((c) => c.id === cardId);
+    const selectedCard = safeCards.find((c) => c.id === cardId);
     if (!selectedCard) return;
     if (!islemTarihiIso || !tutar || tutar <= 0) return;
     if (masrafTuru === 'AKARYAKIT' && !plaka.trim()) return;
@@ -162,9 +169,9 @@ export default function KrediKartiMasraf({
               }}
             >
               <option value="">Seçiniz</option>
-              {eligibleCards.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.kartAdi}
+              {cardOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
                 </option>
               ))}
             </select>
