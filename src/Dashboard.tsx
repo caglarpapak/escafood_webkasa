@@ -531,9 +531,10 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       counterparty: values.muhatap || `${supplier.kod} - ${supplier.ad}`,
       description: values.aciklama || '',
       incoming: 0,
-      outgoing: values.tutar,
+      outgoing: 0,
       balanceAfter: 0,
       bankDelta: 0,
+      displayOutgoing: values.tutar,
       createdAtIso: nowIso,
       createdBy: currentUser.email,
     };
@@ -576,9 +577,10 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       counterparty: counterparty || 'Masraf',
       description: values.aciklama || '',
       incoming: 0,
-      outgoing: values.tutar,
+      outgoing: 0,
       balanceAfter: 0,
       bankDelta: 0,
+      displayOutgoing: values.tutar,
       createdAtIso: nowIso,
       createdBy: currentUser.email,
     };
