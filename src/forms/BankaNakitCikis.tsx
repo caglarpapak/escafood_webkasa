@@ -14,7 +14,8 @@ export type BankaNakitCikisTuru =
   | 'ORTAK_EFT_GIDEN'
   | 'KREDI_TAKSIDI'
   | 'CEK_ODEME'
-  | 'KREDI_KARTI_ODEME';
+  | 'KREDI_KARTI_ODEME'
+  | 'TEDARIKCI_ODEME';
 
 export type FaturaMuhatap = 'ELEKTRIK' | 'SU' | 'DOGALGAZ' | 'INTERNET' | 'DIGER';
 
@@ -53,6 +54,7 @@ const turLabels: Record<BankaNakitCikisTuru, string> = {
   KREDI_TAKSIDI: 'Kredi Taksidi',
   CEK_ODEME: 'Çek Ödemesi',
   KREDI_KARTI_ODEME: 'Kredi Kartı Ödemesi',
+  TEDARIKCI_ODEME: 'Tedarikçi Ödemesi',
 };
 
 const faturaOptions: { value: FaturaMuhatap; label: string }[] = [
@@ -125,7 +127,10 @@ export default function BankaNakitCikis({
     }
   }, [isOpen]);
 
-  const muhatapRequired = useMemo(() => islemTuru === 'MAAS_ODEME', [islemTuru]);
+  const muhatapRequired = useMemo(
+    () => islemTuru === 'MAAS_ODEME' || islemTuru === 'TEDARIKCI_ODEME',
+    [islemTuru]
+  );
   const faturaRequired = useMemo(() => islemTuru === 'FATURA_ODEME', [islemTuru]);
   const hedefRequired = useMemo(() => islemTuru === 'VIRMAN', [islemTuru]);
   const isCardPayment = islemTuru === 'KREDI_KARTI_ODEME';

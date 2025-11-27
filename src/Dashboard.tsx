@@ -408,6 +408,31 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         }
       }
 
+      if (values.islemTuru === 'TEDARIKCI_ODEME') {
+        const nowIso = new Date().toISOString();
+        const tx: DailyTransaction = {
+          id: generateId(),
+          isoDate: values.islemTarihiIso,
+          displayDate: isoToDisplay(values.islemTarihiIso),
+          documentNo,
+          type: 'Banka Çıkış - Tedarikçi Ödemesi',
+          source: values.islemTuru,
+          counterparty: counterparty || 'Tedarikçi',
+          description,
+          incoming: 0,
+          outgoing: 0,
+          balanceAfter: 0,
+          bankId: values.bankaId,
+          bankDelta: -tutar,
+          displayOutgoing: tutar,
+          createdAtIso: nowIso,
+          createdBy: currentUser.email,
+        };
+        addTransactions([tx]);
+        setOpenForm(null);
+        return;
+      }
+
       if (values.islemTuru === 'KREDI_KARTI_ODEME' && values.krediKartiId) {
         const card = creditCards.find((c) => c.id === values.krediKartiId);
         if (!card) {
