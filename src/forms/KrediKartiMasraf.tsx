@@ -36,8 +36,8 @@ interface Props {
   onClose: () => void;
   onSaved: (values: KrediKartiMasrafFormValues) => void;
   currentUserEmail: string;
-  creditCards: CreditCard[];
-  banks: BankMaster[];
+  creditCards?: CreditCard[];
+  banks?: BankMaster[];
 }
 
 export default function KrediKartiMasraf({
@@ -45,8 +45,8 @@ export default function KrediKartiMasraf({
   onClose,
   onSaved,
   currentUserEmail,
-  creditCards,
-  banks,
+  creditCards = [],
+  banks = [],
 }: Props) {
   const [islemTarihiIso, setIslemTarihiIso] = useState(todayIso());
   const [cardId, setCardId] = useState('');
@@ -58,9 +58,12 @@ export default function KrediKartiMasraf({
   const [slipFileName, setSlipFileName] = useState('');
   const [dirty, setDirty] = useState(false);
 
+  const safeBanks = banks ?? [];
+  const safeCards = creditCards ?? [];
+
   const eligibleCards = useMemo(
-    () => creditCards.filter((c) => banks.find((b) => b.id === c.bankaId)?.krediKartiVarMi),
-    [banks, creditCards]
+    () => safeCards.filter((c) => safeBanks.find((b) => b.id === c.bankaId)?.krediKartiVarMi),
+    [safeBanks, safeCards]
   );
 
   useEffect(() => {

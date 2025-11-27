@@ -25,9 +25,9 @@ interface Props {
   onClose: () => void;
   onSaved: (values: KrediKartiTedarikciOdemeFormValues) => void;
   currentUserEmail: string;
-  creditCards: CreditCard[];
-  suppliers: Supplier[];
-  banks: BankMaster[];
+  creditCards?: CreditCard[];
+  suppliers?: Supplier[];
+  banks?: BankMaster[];
 }
 
 export default function KrediKartiTedarikciOdeme({
@@ -35,9 +35,9 @@ export default function KrediKartiTedarikciOdeme({
   onClose,
   onSaved,
   currentUserEmail,
-  creditCards,
-  suppliers,
-  banks,
+  creditCards = [],
+  suppliers = [],
+  banks = [],
 }: Props) {
   const [islemTarihiIso, setIslemTarihiIso] = useState(todayIso());
   const [cardId, setCardId] = useState('');
@@ -47,17 +47,21 @@ export default function KrediKartiTedarikciOdeme({
   const [slipFileName, setSlipFileName] = useState('');
   const [dirty, setDirty] = useState(false);
 
+  const safeBanks = banks ?? [];
+  const safeCards = creditCards ?? [];
+  const safeSuppliers = suppliers ?? [];
+
   const eligibleCards = useMemo(
-    () => creditCards.filter((c) => banks.find((b) => b.id === c.bankaId)?.krediKartiVarMi),
-    [banks, creditCards]
+    () => safeCards.filter((c) => safeBanks.find((b) => b.id === c.bankaId)?.krediKartiVarMi),
+    [safeBanks, safeCards]
   );
 
   const supplierOptions = useMemo(
-    () => suppliers.map((s) => ({ id: s.id, label: `${s.kod} - ${s.ad}` })),
-    [suppliers]
+    () => safeSuppliers.map((s) => ({ id: s.id, label: `${s.kod} - ${s.ad}` })),
+    [safeSuppliers]
   );
 
-  const selectedSupplier = suppliers.find((s) => s.id === supplierId);
+  const selectedSupplier = safeSuppliers.find((s) => s.id === supplierId);
   const selectedCard = eligibleCards.find((c) => c.id === cardId);
   const muhatap = selectedSupplier ? `${selectedSupplier.kod} - ${selectedSupplier.ad}` : '';
 
