@@ -32,8 +32,17 @@ export function diffInDays(fromIso: string, toIso: string): number {
 
 export function addMonths(iso: string, months: number): string {
   const [y, m, d] = iso.split('-').map((part) => parseInt(part, 10));
-  const date = new Date(Date.UTC(y || 1970, (m || 1) - 1, d || 1));
-  date.setUTCMonth(date.getUTCMonth() + months);
-  const isoString = date.toISOString().slice(0, 10);
-  return isoString;
+  const baseYear = Number.isNaN(y) ? 1970 : y;
+  const baseMonth = Number.isNaN(m) ? 0 : (m || 1) - 1;
+  const day = Number.isNaN(d) ? 1 : d || 1;
+
+  const totalMonths = baseMonth + months;
+  const targetYear = baseYear + Math.floor(totalMonths / 12);
+  const targetMonth = ((totalMonths % 12) + 12) % 12;
+
+  const daysInTargetMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+  const clampedDay = Math.min(day, daysInTargetMonth);
+
+  const targetDate = new Date(Date.UTC(targetYear, targetMonth, clampedDay));
+  return targetDate.toISOString().slice(0, 10);
 }
