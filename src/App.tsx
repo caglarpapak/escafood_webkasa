@@ -60,7 +60,7 @@ export default function App() {
         <img
           src="https://esca-food.com/image/cache/catalog/4c37f4a2-f31a-4f30-bf47-ada4e7fdaddd-700x800.png"
           alt="Esca Web Kasa"
-          className="h-52 mx-auto object-contain"
+          className="h-72 w-full max-w-xs sm:max-w-sm mx-auto object-contain"
         />
         <div className="text-2xl font-semibold">Giriş Yap</div>
         <div className="space-y-4 text-left">
