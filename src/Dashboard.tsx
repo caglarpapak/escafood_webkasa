@@ -485,7 +485,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         counterparty,
         description,
         incoming: 0,
-        outgoing: values.islemTuru === 'CEK_ODEME' ? tutar : 0,
+        outgoing: 0,
         balanceAfter: 0,
         bankId: values.bankaId,
         bankDelta: -tutar,
