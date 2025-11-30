@@ -31,6 +31,7 @@ import KrediKartiIzlemeModal from './forms/KrediKartiIzlemeModal';
 import KasaDefteriView from './views/KasaDefteriView';
 import { IslemLoguReport } from './reports/IslemLoguReport';
 import { NakitAkisReport } from './reports/NakitAkisReport';
+import { CekSenetReport } from './reports/CekSenetReport';
 
 const BASE_CASH_BALANCE = 0;
 
@@ -54,7 +55,7 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-type ActiveView = 'DASHBOARD' | 'KASA_DEFTERI' | 'ISLEM_LOGU' | 'NAKIT_AKIS';
+type ActiveView = 'DASHBOARD' | 'KASA_DEFTERI' | 'ISLEM_LOGU' | 'NAKIT_AKIS' | 'CEK_SENET';
 
 function recalcBalances(transactions: DailyTransaction[]): DailyTransaction[] {
   const sorted = [...transactions].sort((a, b) => {
@@ -762,7 +763,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                           return;
                         }
                         if (item.label === 'Çek/Senet Modülü') {
-                          alert('Henüz uygulanmadı');
+                          setActiveView('CEK_SENET');
                           return;
                         }
                         if (section.key === 'cek') {
@@ -973,6 +974,11 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         {activeView === 'NAKIT_AKIS' && (
           <div className="p-4">
             <NakitAkisReport transactions={dailyTransactions} banks={banks} />
+          </div>
+        )}
+        {activeView === 'CEK_SENET' && (
+          <div className="p-4">
+            <CekSenetReport cheques={cheques} customers={customers} suppliers={suppliers} banks={banks} />
           </div>
         )}
       </div>
