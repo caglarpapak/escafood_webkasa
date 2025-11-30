@@ -536,7 +536,7 @@ export default function CekIslemleriModal({
               </FormRow>
               <FormRow label="Banka" required>
                 <select
-                  className="form-input"
+                  className="form-input w-full truncate"
                   value={girisBankaAdi}
                   onChange={(e) => {
                     setGirisBankaAdi(e.target.value);
@@ -581,14 +581,15 @@ export default function CekIslemleriModal({
                   }}
                 />
               </FormRow>
-              <FormRow label="Çek Görseli" required>
+              <div className="md:col-span-2 flex flex-col w-full">
+                <label className="block break-words mb-1 text-sm font-medium">Çek Görseli *</label>
                 <input
-                  className="form-input"
+                  className="form-input w-full"
                   type="file"
                   accept="image/*"
                   onChange={(e) => handleGirisImageChange(e.target.files?.[0])}
                 />
-              </FormRow>
+              </div>
               <FormRow label="Açıklama">
                 <input
                   className="form-input"
@@ -663,7 +664,7 @@ export default function CekIslemleriModal({
               {cikisReason === 'TAHSIL_BANKADAN' && (
                 <FormRow label="Tahsil Bankası" required>
                   <select
-                    className="form-input"
+                    className="form-input w-full truncate"
                     value={cikisTahsilBankasiId}
                     onChange={(e) => {
                       setCikisTahsilBankasiId(e.target.value);
@@ -731,7 +732,7 @@ export default function CekIslemleriModal({
               </FormRow>
               <FormRow label="Banka" required>
                 <select
-                  className="form-input"
+                  className="form-input w-full truncate"
                   value={yeniBankId}
                   onChange={(e) => {
                     setYeniBankId(e.target.value);
@@ -798,14 +799,15 @@ export default function CekIslemleriModal({
                   }}
                 />
               </FormRow>
-              <FormRow label="Çek Görseli" required>
+              <div className="md:col-span-2 flex flex-col w-full">
+                <label className="block break-words mb-1 text-sm font-medium">Çek Görseli *</label>
                 <input
-                  className="form-input"
+                  className="form-input w-full"
                   type="file"
                   accept="image/*"
                   onChange={(e) => handleYeniImageChange(e.target.files?.[0])}
                 />
-              </FormRow>
+              </div>
               <FormRow label="Açıklama">
                 <input
                   className="form-input"

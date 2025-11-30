@@ -223,9 +223,10 @@ export default function PosTahsilat({
               placeholder="Açıklama"
             />
           </FormRow>
-          <FormRow label="Slip Görseli" required>
+          <div className="md:col-span-2 flex flex-col w-full">
+            <label className="block break-words mb-1 text-sm font-medium">Slip Görseli *</label>
             <input
-              className="form-input"
+              className="form-input w-full"
               type="file"
               accept="image/*"
               onChange={(e) => {
@@ -233,7 +234,7 @@ export default function PosTahsilat({
                 setDirty(true);
               }}
             />
-          </FormRow>
+          </div>
           <FormRow label="Kayıt Eden">
             <input className="form-input" value={currentUserEmail} readOnly />
           </FormRow>

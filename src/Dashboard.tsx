@@ -663,7 +663,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             ✕
           </button>
         </div>
-        <div className="space-y-2 p-4 text-sm">
+        <div className="space-y-2 p-4 text-sm overflow-y-auto max-h-screen pr-1">
           {[
             {
               title: 'Nakit İşlemler',
@@ -717,7 +717,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             },
             {
               title: 'Ayarlar',
-              color: 'bg-zinc-700',
+              color: 'bg-gray-800 hover:bg-gray-700',
               key: 'ayar',
               items: [
                 { label: 'Bankalar', form: 'AYARLAR', tab: 'BANKALAR' },
