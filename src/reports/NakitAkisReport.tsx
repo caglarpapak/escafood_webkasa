@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
-import { DailyTransaction } from '../models/transaction';
+import {
+  DailyTransaction,
+  getTransactionSourceLabel,
+  getTransactionTypeLabel,
+} from '../models/transaction';
 import { BankMaster } from '../models/bank';
 import { isoToDisplay, todayIso } from '../utils/date';
 import { formatTl } from '../utils/money';
@@ -34,6 +38,19 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
     return Array.from(new Set(transactions.map((t) => t.createdBy).filter(Boolean))) as string[];
   }, [transactions]);
 
+  const resolveIncomingAmount = (tx: DailyTransaction) => {
+    const bankDelta = tx.bankDelta || 0;
+    return Math.max(tx.displayIncoming || 0, tx.incoming || 0, bankDelta > 0 ? bankDelta : 0);
+  };
+
+  const resolveOutgoingAmount = (tx: DailyTransaction) => {
+    const bankDelta = tx.bankDelta || 0;
+    if (tx.type === 'POS_KOMISYONU') {
+      return tx.displayOutgoing || 0;
+    }
+    return Math.max(tx.displayOutgoing || 0, tx.outgoing || 0, bankDelta < 0 ? Math.abs(bankDelta) : 0);
+  };
+
   const filtered = useMemo(() => {
     const term = searchText.trim().toLowerCase();
     return transactions.filter((tx) => {
@@ -53,8 +70,9 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
       }
 
       if (term) {
-        const combined = `${tx.type || ''} ${tx.source || ''} ${tx.counterparty || ''} ${tx.description || ''}`
-          .toLowerCase();
+        const combined = `${getTransactionTypeLabel(tx.type)} ${getTransactionSourceLabel(tx.source)} ${tx.counterparty || ''} ${
+          tx.description || ''
+        }`.toLowerCase();
         if (!combined.includes(term)) return false;
       }
       return true;
@@ -64,20 +82,11 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
   const totals = useMemo(() => {
     return filtered.reduce(
       (acc, tx) => {
-        const bankDelta = tx.bankDelta || 0;
-        const cashIn =
-          (tx.displayIncoming && tx.displayIncoming > 0 && tx.displayIncoming) ||
-          (tx.incoming && tx.incoming > 0 && tx.incoming) ||
-          (bankDelta > 0 ? bankDelta : 0);
-        const komisyon = tx.type === 'POS Komisyonu' ? tx.displayOutgoing || tx.outgoing || 0 : 0;
-        const cashOut =
-          komisyon ||
-          (tx.displayOutgoing && tx.displayOutgoing > 0 && tx.displayOutgoing) ||
-          (tx.outgoing && tx.outgoing > 0 && tx.outgoing) ||
-          (bankDelta < 0 ? Math.abs(bankDelta) : 0);
+        const incoming = resolveIncomingAmount(tx);
+        const outgoing = resolveOutgoingAmount(tx);
         // POS komisyonları kasa/banka bakiyesine dokunmadan raporda gider olarak gösterilir.
-        acc.totalIn += cashIn;
-        acc.totalOut += cashOut;
+        acc.totalIn += incoming;
+        acc.totalOut += outgoing;
         return acc;
       },
       { totalIn: 0, totalOut: 0 }
@@ -87,22 +96,11 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
   const net = totals.totalIn - totals.totalOut;
 
   const girisler = useMemo(() => {
-    return filtered.filter(
-      (tx) =>
-        (tx.displayIncoming || 0) > 0 ||
-        (tx.incoming || 0) > 0 ||
-        (tx.bankDelta || 0) > 0
-    );
+    return filtered.filter((tx) => resolveIncomingAmount(tx) > 0);
   }, [filtered]);
 
   const cikislar = useMemo(() => {
-    return filtered.filter(
-      (tx) =>
-        tx.type === 'POS Komisyonu' ||
-        (tx.displayOutgoing && tx.displayOutgoing > 0) ||
-        (tx.outgoing && tx.outgoing > 0) ||
-        (tx.bankDelta && tx.bankDelta < 0)
-    );
+    return filtered.filter((tx) => resolveOutgoingAmount(tx) > 0);
   }, [filtered]);
 
   const resolveBankName = (bankId?: string) => banks.find((b) => b.id === bankId)?.bankaAdi || 'Banka';
@@ -213,15 +211,13 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
               )}
               {girisler.map((tx) => {
                 const bankDelta = tx.bankDelta || 0;
-                const amount =
-                  (tx.displayIncoming && tx.displayIncoming > 0 && tx.displayIncoming) ||
-                  (tx.incoming && tx.incoming > 0 && tx.incoming) ||
-                  (bankDelta > 0 ? bankDelta : 0);
-                const kaynak = bankDelta > 0 ? resolveBankName(tx.bankId) : 'Kasa';
+                const amount = resolveIncomingAmount(tx);
+                const kaynak =
+                  bankDelta > 0 && tx.bankId ? resolveBankName(tx.bankId) : getTransactionSourceLabel(tx.source);
                 return (
                   <tr key={tx.id} className="border-t">
                     <td className="px-3 py-2">{isoToDisplay(tx.isoDate)}</td>
-                    <td className="px-3 py-2">{tx.type}</td>
+                    <td className="px-3 py-2">{getTransactionTypeLabel(tx.type)}</td>
                     <td className="px-3 py-2">{kaynak}</td>
                     <td className="px-3 py-2">{tx.counterparty}</td>
                     <td className="px-3 py-2 truncate max-w-[160px]" title={tx.description}>
@@ -258,22 +254,17 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
               )}
               {cikislar.map((tx) => {
                 const bankDelta = tx.bankDelta || 0;
-                const komisyon = tx.type === 'POS Komisyonu' ? tx.displayOutgoing || tx.outgoing || 0 : 0;
-                const amount =
-                  komisyon ||
-                  (tx.displayOutgoing && tx.displayOutgoing > 0 && tx.displayOutgoing) ||
-                  (tx.outgoing && tx.outgoing > 0 && tx.outgoing) ||
-                  (bankDelta < 0 ? Math.abs(bankDelta) : 0);
+                const amount = resolveOutgoingAmount(tx);
                 const kaynak =
-                  tx.type === 'POS Komisyonu'
+                  tx.type === 'POS_KOMISYONU'
                     ? 'POS'
-                    : bankDelta < 0
+                    : bankDelta < 0 && tx.bankId
                     ? resolveBankName(tx.bankId)
-                    : 'Kasa';
+                    : getTransactionSourceLabel(tx.source);
                 return (
                   <tr key={tx.id} className="border-t">
                     <td className="px-3 py-2">{isoToDisplay(tx.isoDate)}</td>
-                    <td className="px-3 py-2">{tx.type}</td>
+                    <td className="px-3 py-2">{getTransactionTypeLabel(tx.type)}</td>
                     <td className="px-3 py-2">{kaynak}</td>
                     <td className="px-3 py-2">{tx.counterparty}</td>
                     <td className="px-3 py-2 truncate max-w-[160px]" title={tx.description}>

@@ -1,0 +1,310 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DailyTransactionType {
+  NAKIT_TAHSILAT
+  NAKIT_ODEME
+  KASA_BANKA_TRANSFER
+  BANKA_KASA_TRANSFER
+  BANKA_HAVALE_GIRIS
+  BANKA_HAVALE_CIKIS
+  POS_TAHSILAT_BRUT
+  POS_KOMISYONU
+  KREDI_KARTI_HARCAMA
+  KREDI_KARTI_EKSTRE_ODEME
+  CEK_GIRISI
+  CEK_TAHSIL_BANKA
+  CEK_ODENMESI
+  CEK_KARSILIKSIZ
+  DEVIR_BAKIYE
+  DUZELTME
+}
+
+enum DailyTransactionSource {
+  KASA
+  BANKA
+  POS
+  KREDI_KARTI
+  CEK
+  SENET
+  DIGER
+}
+
+enum CreditCardOperationType {
+  HARCAMA
+  ODEME
+  IADE
+  FAIZ
+  AIDAT
+}
+
+enum ChequeStatus {
+  KASADA
+  BANKADA_TAHSILDE
+  ODEMEDE
+  TAHSIL_EDILDI
+  KARSILIKSIZ
+}
+
+enum ChequeDirection {
+  ALACAK
+  BORC
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime?
+
+  transactionsCreated Transaction[] @relation("TransactionCreatedBy")
+  transactionsUpdated Transaction[] @relation("TransactionUpdatedBy")
+  transactionsDeleted Transaction[] @relation("TransactionDeletedBy")
+
+  banksCreated Bank[] @relation("BankCreatedBy")
+  banksUpdated Bank[] @relation("BankUpdatedBy")
+  banksDeleted Bank[] @relation("BankDeletedBy")
+
+  creditCardsCreated CreditCard[] @relation("CreditCardCreatedBy")
+  creditCardsUpdated CreditCard[] @relation("CreditCardUpdatedBy")
+  creditCardsDeleted CreditCard[] @relation("CreditCardDeletedBy")
+
+  creditCardOperationsCreated CreditCardOperation[] @relation("CreditCardOperationCreatedBy")
+  creditCardOperationsUpdated CreditCardOperation[] @relation("CreditCardOperationUpdatedBy")
+  creditCardOperationsDeleted CreditCardOperation[] @relation("CreditCardOperationDeletedBy")
+
+  chequesCreated Cheque[] @relation("ChequeCreatedBy")
+  chequesUpdated Cheque[] @relation("ChequeUpdatedBy")
+  chequesDeleted Cheque[] @relation("ChequeDeletedBy")
+
+  customersCreated Customer[] @relation("CustomerCreatedBy")
+  customersUpdated Customer[] @relation("CustomerUpdatedBy")
+  customersDeleted Customer[] @relation("CustomerDeletedBy")
+
+  suppliersCreated Supplier[] @relation("SupplierCreatedBy")
+  suppliersUpdated Supplier[] @relation("SupplierUpdatedBy")
+  suppliersDeleted Supplier[] @relation("SupplierDeletedBy")
+
+  attachmentsCreated Attachment[] @relation("AttachmentCreatedBy")
+  attachmentsUpdated Attachment[] @relation("AttachmentUpdatedBy")
+  attachmentsDeleted Attachment[] @relation("AttachmentDeletedBy")
+}
+
+model Bank {
+  id        String    @id @default(uuid())
+  name      String
+  accountNo String?
+  iban      String?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  createdBy String
+  updatedAt DateTime?
+  updatedBy String?
+  deletedAt DateTime?
+  deletedBy String?
+
+  transactions Transaction[]
+  creditCards  CreditCard[]
+  cheques      Cheque[]
+
+  createdByUser User  @relation("BankCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User? @relation("BankUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByUser User? @relation("BankDeletedBy", fields: [deletedBy], references: [id])
+}
+
+model CreditCard {
+  id        String    @id @default(uuid())
+  name      String
+  bankId    String?
+  limit     Decimal?  @db.Decimal(18, 2)
+  closingDay Int?
+  dueDay     Int?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  createdBy String
+  updatedAt DateTime?
+  updatedBy String?
+  deletedAt DateTime?
+  deletedBy String?
+
+  bank         Bank?        @relation(fields: [bankId], references: [id])
+  operations   CreditCardOperation[]
+  transactions Transaction[]
+
+  createdByUser User  @relation("CreditCardCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User? @relation("CreditCardUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByUser User? @relation("CreditCardDeletedBy", fields: [deletedBy], references: [id])
+}
+
+model CreditCardOperation {
+  id                   String                  @id @default(uuid())
+  creditCardId         String
+  isoDate              String
+  type                 CreditCardOperationType
+  amount               Decimal                 @db.Decimal(18, 2)
+  description          String?
+  relatedTransactionId String?
+  createdAt            DateTime                @default(now())
+  createdBy            String
+  updatedAt            DateTime?
+  updatedBy            String?
+  deletedAt            DateTime?
+  deletedBy            String?
+
+  creditCard         CreditCard   @relation(fields: [creditCardId], references: [id])
+  relatedTransaction Transaction? @relation(fields: [relatedTransactionId], references: [id])
+
+  createdByUser User  @relation("CreditCardOperationCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User? @relation("CreditCardOperationUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByUser User? @relation("CreditCardOperationDeletedBy", fields: [deletedBy], references: [id])
+}
+
+model Cheque {
+  id           String         @id @default(uuid())
+  cekNo        String
+  amount       Decimal        @db.Decimal(18, 2)
+  entryDate    String
+  maturityDate String
+  status       ChequeStatus
+  direction    ChequeDirection
+  customerId   String?
+  supplierId   String?
+  bankId       String?
+  description  String?
+  attachmentId String?
+  createdAt    DateTime       @default(now())
+  createdBy    String
+  updatedAt    DateTime?
+  updatedBy    String?
+  deletedAt    DateTime?
+  deletedBy    String?
+
+  bank         Bank?        @relation(fields: [bankId], references: [id])
+  customer     Customer?    @relation(fields: [customerId], references: [id])
+  supplier     Supplier?    @relation(fields: [supplierId], references: [id])
+  attachment   Attachment?  @relation(fields: [attachmentId], references: [id])
+  transactions Transaction[]
+
+  createdByUser User  @relation("ChequeCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User? @relation("ChequeUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByUser User? @relation("ChequeDeletedBy", fields: [deletedBy], references: [id])
+}
+
+model Customer {
+  id        String     @id @default(uuid())
+  name      String
+  phone     String?
+  email     String?
+  taxNo     String?
+  address   String?
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  createdBy String
+  updatedAt DateTime?
+  updatedBy String?
+  deletedAt DateTime?
+  deletedBy String?
+
+  cheques      Cheque[]
+  transactions Transaction[]
+
+  createdByUser User  @relation("CustomerCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User? @relation("CustomerUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByUser User? @relation("CustomerDeletedBy", fields: [deletedBy], references: [id])
+}
+
+model Supplier {
+  id        String     @id @default(uuid())
+  name      String
+  phone     String?
+  email     String?
+  taxNo     String?
+  address   String?
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  createdBy String
+  updatedAt DateTime?
+  updatedBy String?
+  deletedAt DateTime?
+  deletedBy String?
+
+  cheques      Cheque[]
+  transactions Transaction[]
+
+  createdByUser User  @relation("SupplierCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User? @relation("SupplierUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByUser User? @relation("SupplierDeletedBy", fields: [deletedBy], references: [id])
+}
+
+model Attachment {
+  id         String     @id @default(uuid())
+  fileName   String
+  mimeType   String
+  base64Data String
+  createdAt  DateTime   @default(now())
+  createdBy  String?
+  updatedAt  DateTime?
+  updatedBy  String?
+  deletedAt  DateTime?
+  deletedBy  String?
+
+  transactions Transaction[]
+  cheques      Cheque[]
+
+  createdByUser User? @relation("AttachmentCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User? @relation("AttachmentUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByUser User? @relation("AttachmentDeletedBy", fields: [deletedBy], references: [id])
+}
+
+model Transaction {
+  id              String                   @id @default(uuid())
+  isoDate         String
+  documentNo      String?
+  type            DailyTransactionType
+  source          DailyTransactionSource
+  counterparty    String?
+  description     String?
+  incoming        Decimal                  @db.Decimal(18, 2) @default(0)
+  outgoing        Decimal                  @db.Decimal(18, 2) @default(0)
+  bankDelta       Decimal                  @db.Decimal(18, 2) @default(0)
+  displayIncoming Decimal?                 @db.Decimal(18, 2)
+  displayOutgoing Decimal?                 @db.Decimal(18, 2)
+  balanceAfter    Decimal                  @db.Decimal(18, 2)
+  cashAccountId   String?
+  bankId          String?
+  creditCardId    String?
+  chequeId        String?
+  customerId      String?
+  supplierId      String?
+  attachmentId    String?
+  createdAt       DateTime                 @default(now())
+  createdBy       String
+  updatedAt       DateTime?
+  updatedBy       String?
+  deletedAt       DateTime?
+  deletedBy       String?
+
+  bank       Bank?       @relation(fields: [bankId], references: [id])
+  creditCard CreditCard? @relation(fields: [creditCardId], references: [id])
+  cheque     Cheque?     @relation(fields: [chequeId], references: [id])
+  customer   Customer?   @relation(fields: [customerId], references: [id])
+  supplier   Supplier?   @relation(fields: [supplierId], references: [id])
+  attachment Attachment? @relation(fields: [attachmentId], references: [id])
+
+  createdByUser User  @relation("TransactionCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User? @relation("TransactionUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByUser User? @relation("TransactionDeletedBy", fields: [deletedBy], references: [id])
+
+  creditCardOperations CreditCardOperation[]
+
+  @@map("transactions")
+}

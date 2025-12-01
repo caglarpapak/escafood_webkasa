@@ -8,7 +8,7 @@ import { CreditCard } from './models/card';
 import { Loan } from './models/loan';
 import { GlobalSettings } from './models/settings';
 import { Cheque } from './models/cheque';
-import { DailyTransaction } from './models/transaction';
+import { DailyTransaction, DailyTransactionSource, DailyTransactionType } from './models/transaction';
 import { UpcomingPayment } from './models/upcomingPayment';
 import { isoToDisplay, todayIso, getWeekdayTr, diffInDays } from './utils/date';
 import { formatTl } from './utils/money';
@@ -251,8 +251,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       isoDate: values.islemTarihiIso,
       displayDate: isoToDisplay(values.islemTarihiIso),
       documentNo,
-      type: 'Nakit Giriş',
-      source: values.kaynak,
+      type: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? 'BANKA_KASA_TRANSFER' : 'NAKIT_TAHSILAT',
+      source: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? 'BANKA' : 'KASA',
       counterparty,
       description: values.aciklama || '',
       incoming: values.tutar,
@@ -279,8 +279,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       isoDate: values.islemTarihiIso,
       displayDate: isoToDisplay(values.islemTarihiIso),
       documentNo,
-      type: 'Nakit Çıkış',
-      source: values.kaynak,
+      type: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? 'KASA_BANKA_TRANSFER' : 'NAKIT_ODEME',
+      source: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? 'BANKA' : 'KASA',
       counterparty,
       description: values.aciklama || '',
       incoming: 0,
@@ -306,13 +306,15 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       (foundSupplier && `${foundSupplier.kod} - ${foundSupplier.ad}`) ||
       values.muhatap ||
       'Diğer';
+    const type: DailyTransactionType =
+      values.islemTuru === 'CEK_TAHSILATI' ? 'CEK_TAHSIL_BANKA' : 'BANKA_HAVALE_GIRIS';
     const tx: DailyTransaction = {
       id: generateId(),
       isoDate: values.islemTarihiIso,
       displayDate: isoToDisplay(values.islemTarihiIso),
       documentNo,
-      type: values.islemTuru === 'CEK_TAHSILATI' ? 'Banka Giriş - Çek Tahsilatı' : 'Banka Giriş',
-      source: values.islemTuru,
+      type,
+      source: 'BANKA',
       counterparty,
       description: values.aciklama || '',
       incoming: 0,
@@ -344,8 +346,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         isoDate: values.islemTarihiIso,
         displayDate: isoToDisplay(values.islemTarihiIso),
         documentNo: documentNoCks,
-        type: 'Banka Çıkış - Virman',
-        source: values.islemTuru,
+        type: 'BANKA_HAVALE_CIKIS',
+        source: 'BANKA',
         counterparty: values.muhatap || 'Virman',
         description: values.aciklama || '',
         incoming: 0,
@@ -362,8 +364,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         isoDate: values.islemTarihiIso,
         displayDate: isoToDisplay(values.islemTarihiIso),
         documentNo: documentNoGrs,
-        type: 'Banka Giriş - Virman',
-        source: values.islemTuru,
+        type: 'BANKA_HAVALE_GIRIS',
+        source: 'BANKA',
         counterparty: values.muhatap || 'Virman',
         description: `Virman - Kaynak İşlem: ${documentNoCks}`,
         incoming: 0,
@@ -420,8 +422,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           isoDate: values.islemTarihiIso,
           displayDate: isoToDisplay(values.islemTarihiIso),
           documentNo,
-          type: 'Banka Çıkış - Tedarikçi Ödemesi',
-          source: values.islemTuru,
+          type: 'BANKA_HAVALE_CIKIS',
+          source: 'BANKA',
           counterparty: counterparty || 'Tedarikçi',
           description,
           incoming: 0,
@@ -462,8 +464,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           isoDate: values.islemTarihiIso,
           displayDate: isoToDisplay(values.islemTarihiIso),
           documentNo,
-          type: 'Banka Çıkış - Kredi Kartı Ödemesi',
-          source: 'KK_ODEME',
+          type: 'KREDI_KARTI_EKSTRE_ODEME',
+          source: 'BANKA',
           counterparty: card.kartAdi,
           description: values.aciklama || '',
           incoming: 0,
@@ -485,8 +487,13 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         isoDate: values.islemTarihiIso,
         displayDate: isoToDisplay(values.islemTarihiIso),
         documentNo,
-        type: values.islemTuru === 'CEK_ODEME' ? 'Banka Çıkış - Çek Ödemesi' : 'Banka Çıkış',
-        source: values.islemTuru,
+        type:
+          values.islemTuru === 'CEK_ODEME'
+            ? 'CEK_ODENMESI'
+            : values.islemTuru === 'KREDI_KARTI_ODEME'
+            ? 'KREDI_KARTI_EKSTRE_ODEME'
+            : 'BANKA_HAVALE_CIKIS',
+        source: 'BANKA',
         counterparty,
         description,
         incoming: 0,
@@ -518,7 +525,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       isoDate: values.islemTarihiIso,
       displayDate: isoToDisplay(values.islemTarihiIso),
       documentNo,
-      type: 'POS Tahsilat - Brüt',
+      type: 'POS_TAHSILAT_BRUT',
       source: 'POS',
       counterparty,
       description: values.aciklama || '',
@@ -539,7 +546,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       isoDate: values.islemTarihiIso,
       displayDate: isoToDisplay(values.islemTarihiIso),
       documentNo: `${documentNo}-KOM`,
-      type: 'POS Komisyonu',
+      type: 'POS_KOMISYONU',
       source: 'POS',
       counterparty,
       description: values.aciklama || 'POS Komisyonu',
@@ -580,8 +587,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       isoDate: values.islemTarihiIso,
       displayDate: isoToDisplay(values.islemTarihiIso),
       documentNo: `KK-TED-${Date.now()}`,
-      type: 'Kredi Kartı - Tedarikçi Ödemesi',
-      source: 'KK_TEDARIKCI',
+      type: 'KREDI_KARTI_HARCAMA',
+      source: 'KREDI_KARTI',
       counterparty: values.muhatap || `${supplier.kod} - ${supplier.ad}`,
       description: values.aciklama || '',
       incoming: 0,
@@ -626,8 +633,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       isoDate: values.islemTarihiIso,
       displayDate: isoToDisplay(values.islemTarihiIso),
       documentNo: `KK-MSF-${Date.now()}`,
-      type: 'Kredi Kartı - Masraf',
-      source: values.masrafTuru,
+      type: 'KREDI_KARTI_HARCAMA',
+      source: 'KREDI_KARTI',
       counterparty: counterparty || 'Masraf',
       description: values.aciklama || '',
       incoming: 0,

@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
-import { DailyTransaction } from '../models/transaction';
+import {
+  DailyTransaction,
+  getTransactionSourceLabel,
+  getTransactionTypeLabel,
+} from '../models/transaction';
 import { BankMaster } from '../models/bank';
 import { isoToDisplay, todayIso } from '../utils/date';
 import { formatTl } from '../utils/money';
@@ -23,12 +27,20 @@ type Summary = {
 };
 
 function mapSourceGroup(tx: DailyTransaction): SourceGroup {
-  if (tx.source?.startsWith('NAKIT')) return 'NAKIT';
-  if (tx.source?.startsWith('BNK') || tx.bankId) return 'BANKA';
-  if (tx.source?.includes('KK')) return 'KART';
-  if (tx.source?.includes('CEK')) return 'CEK';
-  if (tx.source === 'POS') return 'POS';
-  return 'HEPSI';
+  switch (tx.source) {
+    case 'KASA':
+      return 'NAKIT';
+    case 'BANKA':
+      return 'BANKA';
+    case 'KREDI_KARTI':
+      return 'KART';
+    case 'CEK':
+      return 'CEK';
+    case 'POS':
+      return 'POS';
+    default:
+      return 'HEPSI';
+  }
 }
 
 function formatTime(iso?: string) {
@@ -85,8 +97,9 @@ export function IslemLoguReport({ transactions, banks, currentUserEmail, onBackT
       if (max != null && amount > max) return false;
 
       if (term) {
-        const combined = `${tx.type || ''} ${tx.source || ''} ${tx.counterparty || ''} ${tx.description || ''}`
-          .toLowerCase();
+        const combined = `${getTransactionTypeLabel(tx.type)} ${getTransactionSourceLabel(tx.source)} ${tx.counterparty || ''} ${
+          tx.description || ''
+        }`.toLowerCase();
         if (!combined.includes(term)) return false;
       }
       return true;
@@ -160,7 +173,7 @@ export function IslemLoguReport({ transactions, banks, currentUserEmail, onBackT
               <option value="HEPSI">Hepsi</option>
               {distinctTypes.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {getTransactionTypeLabel(t as Parameters<typeof getTransactionTypeLabel>[0])}
                 </option>
               ))}
             </select>
@@ -272,8 +285,8 @@ export function IslemLoguReport({ transactions, banks, currentUserEmail, onBackT
                 <tr key={tx.id} className="border-t">
                   <td className="px-3 py-2">{isoToDisplay(tx.isoDate)}</td>
                   <td className="px-3 py-2">{formatTime(tx.createdAtIso)}</td>
-                  <td className="px-3 py-2">{tx.type}</td>
-                  <td className="px-3 py-2">{tx.source}</td>
+                  <td className="px-3 py-2">{getTransactionTypeLabel(tx.type)}</td>
+                  <td className="px-3 py-2">{getTransactionSourceLabel(tx.source)}</td>
                   <td className="px-3 py-2">{tx.counterparty}</td>
                   <td className="px-3 py-2 truncate max-w-[160px]" title={tx.description}>
                     {tx.description}
