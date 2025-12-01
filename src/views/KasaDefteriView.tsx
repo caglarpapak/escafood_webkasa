@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
-import { DailyTransaction } from '../models/transaction';
+import {
+  DailyTransaction,
+  getTransactionSourceLabel,
+  getTransactionTypeLabel,
+} from '../models/transaction';
 import { isoToDisplay } from '../utils/date';
 import { formatTl } from '../utils/money';
 import { HomepageIcon } from '../components/HomepageIcon';
@@ -43,7 +47,7 @@ function getYearRange(today: Date) {
 const sorters: Record<SortKey, (a: DailyTransaction, b: DailyTransaction) => number> = {
   isoDate: (a, b) => a.isoDate.localeCompare(b.isoDate),
   documentNo: (a, b) => a.documentNo.localeCompare(b.documentNo),
-  type: (a, b) => a.type.localeCompare(b.type),
+  type: (a, b) => getTransactionTypeLabel(a.type).localeCompare(getTransactionTypeLabel(b.type)),
   counterparty: (a, b) => a.counterparty.localeCompare(b.counterparty),
   incoming: (a, b) => (a.displayIncoming ?? a.incoming) - (b.displayIncoming ?? b.incoming),
   outgoing: (a, b) => (a.displayOutgoing ?? a.outgoing) - (b.displayOutgoing ?? b.outgoing),
@@ -68,7 +72,7 @@ export default function KasaDefteriView({ transactions, onBackToDashboard }: Kas
       if (filterStartIso && tx.isoDate < filterStartIso) return false;
       if (filterEndIso && tx.isoDate > filterEndIso) return false;
       if (filterDocumentNo && !tx.documentNo.toLowerCase().includes(filterDocumentNo.toLowerCase())) return false;
-      if (filterType && !tx.type.toLowerCase().includes(filterType.toLowerCase())) return false;
+      if (filterType && !getTransactionTypeLabel(tx.type).toLowerCase().includes(filterType.toLowerCase())) return false;
       if (filterCounterparty && !tx.counterparty.toLowerCase().includes(filterCounterparty.toLowerCase())) return false;
       if (filterDescription && !tx.description.toLowerCase().includes(filterDescription.toLowerCase())) return false;
       return true;
@@ -289,8 +293,8 @@ export default function KasaDefteriView({ transactions, onBackToDashboard }: Kas
                 <tr key={tx.id} className="border-b last:border-0">
                   <td className="py-2 px-2">{tx.displayDate}</td>
                   <td className="py-2 px-2">{tx.documentNo}</td>
-                  <td className="py-2 px-2">{tx.type}</td>
-                  <td className="py-2 px-2">{tx.source}</td>
+                  <td className="py-2 px-2">{getTransactionTypeLabel(tx.type)}</td>
+                  <td className="py-2 px-2">{getTransactionSourceLabel(tx.source)}</td>
                   <td className="py-2 px-2">{tx.counterparty}</td>
                   <td className="py-2 px-2">{tx.description}</td>
                   <td className="py-2 px-2">
