@@ -165,7 +165,7 @@ export default function KasaDefteriView({ transactions, onBackToDashboard }: Kas
               className="h-[84px] object-contain"
             />
             <div>
-              <h1 className="text-3xl font-semibold text-center">Kasa Defteri</h1>
+              <h1 className="text-3xl font-semibold text-center">Kasa Defteri </h1>
               <p className="text-sm text-slate-600 text-center">Tüm tarih aralığındaki kasa ve banka işlemleri</p>
             </div>
           </div>
