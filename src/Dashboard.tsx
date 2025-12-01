@@ -327,7 +327,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       createdBy: currentUser.email,
     };
     if (values.islemTuru === 'CEK_TAHSILATI' && values.cekId) {
-      setCheques((prev) => prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_OLDU' } : c)));
+      setCheques((prev) => prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_EDILDI' } : c)));
     }
     addTransactions([tx]);
     setOpenForm(null);
@@ -409,10 +409,10 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           const supplier = cheque.tedarikciId ? suppliers.find((s) => s.id === cheque.tedarikciId) : undefined;
           counterparty = supplier ? `${supplier.kod} - ${supplier.ad}` : cheque.lehtar || counterparty;
           description = `Çek No: ${cheque.cekNo}${values.aciklama ? ` – ${values.aciklama}` : ''}`;
-          setCheques((prev) =>
-            prev.map((c) => (c.id === values.cekId ? { ...c, status: 'ODEME_YAPILDI', kasaMi: false } : c))
-          );
-        }
+        setCheques((prev) =>
+          prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_EDILDI', kasaMi: false } : c))
+        );
+      }
       }
 
       if (values.islemTuru === 'TEDARIKCI_ODEME') {

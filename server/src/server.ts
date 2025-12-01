@@ -4,11 +4,11 @@ import dotenv from 'dotenv';
 import express, { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './config/prisma';
+import { transactionsRouter } from './modules/transactions';
 
 dotenv.config();
 
-const prisma = new PrismaClient();
 const app = express();
 
 app.use(helmet());
@@ -20,6 +20,8 @@ app.get('/health', async (_req: Request, res: Response) => {
   await prisma.$queryRaw`SELECT 1`;
   res.json({ status: 'ok' });
 });
+
+app.use('/transactions', transactionsRouter);
 
 app.use((req: Request, res: Response) => {
   res.status(404).json({ message: `Route not found: ${req.method} ${req.path}` });

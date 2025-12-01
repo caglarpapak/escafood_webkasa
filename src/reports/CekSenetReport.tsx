@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Cheque, ChequeStatus } from '../models/cheque';
+import { Cheque, ChequeStatus, normalizeLegacyChequeStatus } from '../models/cheque';
 import { Customer } from '../models/customer';
 import { Supplier } from '../models/supplier';
 import { BankMaster } from '../models/bank';
@@ -22,23 +22,11 @@ const statusLabels: Record<ChequeStatus, string> = {
   KASADA: 'Kasada',
   BANKADA_TAHSILDE: 'Bankada (Tahsilde)',
   ODEMEDE: 'Ödemede',
-  TAHSIL_OLDU: 'Tahsil Oldu',
-  ODEME_YAPILDI: 'Ödeme Yapıldı',
+  TAHSIL_EDILDI: 'Tahsil Edildi',
   KARSILIKSIZ: 'Karşılıksız',
-  IPTAL: 'İptal',
-  CIKMIS: 'Çıkmış',
 };
 
-const allStatuses: ChequeStatus[] = [
-  'KASADA',
-  'BANKADA_TAHSILDE',
-  'ODEMEDE',
-  'TAHSIL_OLDU',
-  'ODEME_YAPILDI',
-  'KARSILIKSIZ',
-  'IPTAL',
-  'CIKMIS',
-];
+const allStatuses: ChequeStatus[] = ['KASADA', 'BANKADA_TAHSILDE', 'ODEMEDE', 'TAHSIL_EDILDI', 'KARSILIKSIZ'];
 
 function isOurCheque(cek: Cheque): boolean {
   if (typeof (cek as any).bizimCekimizMi === 'boolean') {
@@ -63,8 +51,12 @@ export function CekSenetReport({ cheques, customers, suppliers, banks, onBackToD
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [previewTitle, setPreviewTitle] = useState('');
 
+  const normalizedCheques = useMemo(() => {
+    return cheques.map((c) => ({ ...c, status: normalizeLegacyChequeStatus(c.status) }));
+  }, [cheques]);
+
   const filteredCheques = useMemo(() => {
-    return cheques
+    return normalizedCheques
       .filter((c) => {
         if (quickFilter === 'TODAY' && c.vadeTarihi !== today) return false;
         if (quickFilter === 'NEXT7') {
@@ -73,7 +65,7 @@ export function CekSenetReport({ cheques, customers, suppliers, banks, onBackToD
         }
         if (quickFilter === 'OVERDUE') {
           const d = diffInDays(today, c.vadeTarihi);
-          if (!(d < 0) || ['TAHSIL_OLDU', 'ODEME_YAPILDI', 'IPTAL'].includes(c.status)) return false;
+          if (!(d < 0) || c.status === 'TAHSIL_EDILDI') return false;
         }
         return true;
       })
@@ -95,7 +87,19 @@ export function CekSenetReport({ cheques, customers, suppliers, banks, onBackToD
         return combined.includes(term);
       })
       .sort((a, b) => a.vadeTarihi.localeCompare(b.vadeTarihi));
-  }, [bankaId, cheques, fromVadeIso, musteriId, quickFilter, search, statusFilter, tedarikciId, today, toVadeIso, turFilter]);
+  }, [
+    bankaId,
+    normalizedCheques,
+    fromVadeIso,
+    musteriId,
+    quickFilter,
+    search,
+    statusFilter,
+    tedarikciId,
+    today,
+    toVadeIso,
+    turFilter,
+  ]);
 
   const summary = useMemo(() => {
     const kasa = filteredCheques.filter((c) => c.status === 'KASADA' && c.kasaMi);
@@ -103,7 +107,7 @@ export function CekSenetReport({ cheques, customers, suppliers, banks, onBackToD
       (c) => isOurCheque(c) && (c.status === 'ODEMEDE' || c.status === 'BANKADA_TAHSILDE')
     );
     const tahsilde = filteredCheques.filter((c) => c.status === 'BANKADA_TAHSILDE');
-    const sorunlu = filteredCheques.filter((c) => c.status === 'KARSILIKSIZ' || c.status === 'IPTAL');
+    const sorunlu = filteredCheques.filter((c) => c.status === 'KARSILIKSIZ');
 
     const sum = (list: Cheque[]) => list.reduce((acc, c) => acc + (c.tutar || 0), 0);
     const countAndSum = (list: Cheque[]) => ({ count: list.length, total: sum(list) });
@@ -339,7 +343,7 @@ export function CekSenetReport({ cheques, customers, suppliers, banks, onBackToD
                   ? 'Kasada'
                   : c.status === 'BANKADA_TAHSILDE'
                   ? 'Bankada'
-                  : c.status === 'ODEMEDE' || c.status === 'CIKMIS'
+                  : c.status === 'ODEMEDE'
                   ? 'Dolaşımda'
                   : 'Kapalı';
 
