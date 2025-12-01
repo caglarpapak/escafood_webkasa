@@ -6,7 +6,6 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { prisma } from './config/prisma';
 import { banksRouter } from './modules/banks';
-import { chequesRouter } from './modules/cheques';
 import { transactionsRouter } from './modules/transactions';
 
 dotenv.config();
@@ -25,7 +24,6 @@ app.get('/health', async (_req: Request, res: Response) => {
 
 app.use('/transactions', transactionsRouter);
 app.use('/banks', banksRouter);
-app.use('/api/cheques', chequesRouter);
 
 app.use((req: Request, res: Response) => {
   res.status(404).json({ message: `Route not found: ${req.method} ${req.path}` });
