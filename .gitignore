@@ -1,9 +1,12 @@
 node_modules
 server/node_modules
 server/dist
+dist/
 server/.env
 .env
 .DS_Store
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.bmp
+*.BMP

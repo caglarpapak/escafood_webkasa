@@ -43,7 +43,3 @@ export function apiDelete<T>(endpoint: string): Promise<T> {
   return apiRequest<T>(endpoint, { method: 'DELETE' });
 }
 
-export function apiDelete<T>(endpoint: string): Promise<T> {
-  return apiRequest<T>(endpoint, { method: 'DELETE' });
-}
-
