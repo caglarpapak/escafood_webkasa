@@ -1,35 +1,25 @@
-export interface BankDto {
+import { z } from 'zod';
+import { createBankSchema, updateBankSchema, deleteBankSchema, bankIdParamSchema } from './banks.validation';
+
+export type CreateBankDTO = z.infer<typeof createBankSchema>;
+export type UpdateBankDTO = z.infer<typeof updateBankSchema>;
+export type DeleteBankDTO = z.infer<typeof deleteBankSchema>;
+export type BankIdParamDTO = z.infer<typeof bankIdParamSchema>;
+
+export interface BankRecord {
   id: string;
   name: string;
   accountNo: string | null;
   iban: string | null;
   isActive: boolean;
-  createdAt: string;
+  createdAt: Date;
   createdBy: string;
-  updatedAt: string | null;
+  updatedAt: Date | null;
   updatedBy: string | null;
-  deletedAt: string | null;
+  deletedAt: Date | null;
   deletedBy: string | null;
-  // Computed fields
-  currentBalance?: number;
 }
 
-export interface CreateBankDto {
-  name: string;
-  accountNo?: string | null;
-  iban?: string | null;
-  isActive?: boolean;
+export interface BankWithBalance extends BankRecord {
+  currentBalance: number;
 }
-
-export interface UpdateBankDto {
-  name?: string;
-  accountNo?: string | null;
-  iban?: string | null;
-  isActive?: boolean;
-}
-
-export interface BankListResponse {
-  items: BankDto[];
-  totalCount: number;
-}
-

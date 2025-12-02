@@ -1,66 +1,12 @@
-import { Router } from 'express';
-import {
-  createTransaction,
-  getTransaction,
-  updateTransaction,
-  listTransactions,
-  deleteTransaction,
-} from './transactions.controller';
-import {
-  createTransactionSchema,
-  updateTransactionSchema,
-  transactionListQuerySchema,
-} from './transactions.validation';
-import { z } from 'zod';
+import { Request, Response, Router } from 'express';
+import { TransactionsController } from './transactions.controller';
 
 const router = Router();
+const controller = new TransactionsController();
 
-/**
- * Validation middleware
- */
-function validate(schema: z.ZodSchema) {
-  return (req: any, res: any, next: any) => {
-    try {
-      schema.parse(req.body);
-      next();
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({
-          message: 'Validation error',
-          errors: error.errors,
-        });
-        return;
-      }
-      next(error);
-    }
-  };
-}
-
-function validateQuery(schema: z.ZodSchema) {
-  return (req: any, res: any, next: any) => {
-    try {
-      schema.parse(req.query);
-      next();
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({
-          message: 'Validation error',
-          errors: error.errors,
-        });
-        return;
-      }
-      next(error);
-    }
-  };
-}
-
-/**
- * Routes
- */
-router.get('/', validateQuery(transactionListQuerySchema), listTransactions);
-router.post('/', validate(createTransactionSchema), createTransaction);
-router.get('/:id', getTransaction);
-router.put('/:id', validate(updateTransactionSchema), updateTransaction);
-router.delete('/:id', deleteTransaction);
+router.post('/', (req: Request, res: Response) => controller.create(req, res));
+router.get('/', (req: Request, res: Response) => controller.list(req, res));
+router.put('/:id', (req: Request, res: Response) => controller.update(req, res));
+router.delete('/:id', (req: Request, res: Response) => controller.remove(req, res));
 
 export default router;

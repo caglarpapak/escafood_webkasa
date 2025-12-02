@@ -1,16 +1,34 @@
 import { z } from 'zod';
 
-export const createBankSchema = z.object({
-  name: z.string().min(1, 'Banka adı gereklidir'),
-  accountNo: z.string().max(100).nullable().optional(),
-  iban: z.string().max(34).nullable().optional(),
-  isActive: z.boolean().optional(),
+const uuidSchema = z.string().uuid();
+
+const baseBankSchema = z
+  .object({
+    name: z.string().trim().min(1, 'name is required'),
+    accountNo: z.string().trim().optional().nullable(),
+    iban: z.string().trim().optional().nullable(),
+  })
+  .strict();
+
+export const createBankSchema = baseBankSchema.extend({
+  createdBy: z.string().trim(),
 });
 
-export const updateBankSchema = z.object({
-  name: z.string().min(1).optional(),
-  accountNo: z.string().max(100).nullable().optional(),
-  iban: z.string().max(34).nullable().optional(),
+export const updateBankSchema = baseBankSchema.partial().extend({
   isActive: z.boolean().optional(),
+  updatedBy: z.string().trim(),
 });
 
+export const deleteBankSchema = z
+  .object({
+    deletedBy: z.string().trim(),
+  })
+  .strict();
+
+export const bankIdParamSchema = z.object({
+  id: uuidSchema,
+});
+
+export type CreateBankInput = z.infer<typeof createBankSchema>;
+export type UpdateBankInput = z.infer<typeof updateBankSchema>;
+export type DeleteBankInput = z.infer<typeof deleteBankSchema>;

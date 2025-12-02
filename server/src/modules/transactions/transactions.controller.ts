@@ -1,90 +1,65 @@
 import { Request, Response } from 'express';
+import { ZodError } from 'zod';
 import { TransactionsService } from './transactions.service';
 import {
-  CreateTransactionDto,
-  UpdateTransactionDto,
-  TransactionListQuery,
-} from './transactions.types';
-import { getUserId } from '../../config/auth';
+  createTransactionSchema,
+  deleteTransactionSchema,
+  transactionQuerySchema,
+  updateTransactionSchema,
+} from './transactions.validation';
 
-const transactionsService = new TransactionsService();
+const service = new TransactionsService();
 
-export async function createTransaction(req: Request, res: Response): Promise<void> {
-  const data = req.body as CreateTransactionDto;
-  const createdBy = getUserId(req);
-
-  try {
-    const transaction = await transactionsService.createTransaction(data, createdBy);
-    res.status(201).json(transaction);
-  } catch (error: any) {
-    res.status(400).json({ message: error.message || 'Failed to create transaction' });
+function handleError(res: Response, error: unknown) {
+  if (error instanceof ZodError) {
+    return res.status(400).json({ message: 'Validation error', details: error.errors });
   }
+
+  if (error instanceof Error) {
+    return res.status(400).json({ message: error.message });
+  }
+
+  return res.status(500).json({ message: 'Internal server error' });
 }
 
-export async function getTransaction(req: Request, res: Response): Promise<void> {
-  const { id } = req.params;
-
-  try {
-    const transaction = await transactionsService.getTransactionById(id);
-    if (!transaction) {
-      res.status(404).json({ message: 'Transaction not found' });
-      return;
+export class TransactionsController {
+  async create(req: Request, res: Response) {
+    try {
+      const payload = createTransactionSchema.parse(req.body);
+      const transaction = await service.createTransaction(payload);
+      res.status(201).json(transaction);
+    } catch (error) {
+      handleError(res, error);
     }
-    res.json(transaction);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message || 'Failed to get transaction' });
+  }
+
+  async list(req: Request, res: Response) {
+    try {
+      const query = transactionQuerySchema.parse(req.query);
+      const result = await service.getTransactions(query);
+      res.json(result);
+    } catch (error) {
+      handleError(res, error);
+    }
+  }
+
+  async update(req: Request, res: Response) {
+    try {
+      const payload = updateTransactionSchema.parse(req.body);
+      const transaction = await service.updateTransaction(req.params.id, payload);
+      res.json(transaction);
+    } catch (error) {
+      handleError(res, error);
+    }
+  }
+
+  async remove(req: Request, res: Response) {
+    try {
+      const payload = deleteTransactionSchema.parse(req.body);
+      const transaction = await service.deleteTransaction(req.params.id, payload);
+      res.json(transaction);
+    } catch (error) {
+      handleError(res, error);
+    }
   }
 }
-
-export async function updateTransaction(req: Request, res: Response): Promise<void> {
-  const { id } = req.params;
-  const data = req.body as UpdateTransactionDto;
-  const updatedBy = getUserId(req);
-
-  try {
-    const transaction = await transactionsService.updateTransaction(id, data, updatedBy);
-    res.json(transaction);
-  } catch (error: any) {
-    if (error.message === 'Transaction not found') {
-      res.status(404).json({ message: error.message });
-      return;
-    }
-    if (error.message === 'Cannot update deleted transaction') {
-      res.status(400).json({ message: error.message });
-      return;
-    }
-    res.status(500).json({ message: error.message || 'Failed to update transaction' });
-  }
-}
-
-export async function listTransactions(req: Request, res: Response): Promise<void> {
-  const query = req.query as unknown as TransactionListQuery;
-
-  try {
-    const result = await transactionsService.listTransactions(query);
-    res.json(result);
-  } catch (error: any) {
-    res.status(500).json({ message: error.message || 'Failed to list transactions' });
-  }
-}
-
-export async function deleteTransaction(req: Request, res: Response): Promise<void> {
-  const { id } = req.params;
-  const deletedBy = getUserId(req);
-
-  try {
-    await transactionsService.deleteTransaction(id, deletedBy);
-    res.status(204).send();
-  } catch (error: any) {
-    if (error.message === 'Transaction not found') {
-      res.status(404).json({ message: error.message });
-      return;
-    }
-    if (error.message === 'Transaction already deleted') {
-      res.status(400).json({ message: error.message });
-      return;
-    }
-    res.status(500).json({ message: error.message || 'Failed to delete transaction' });
-  }
-}
-

@@ -284,11 +284,14 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     const foundCustomer = values.muhatapId ? customers.find((c) => c.id === values.muhatapId) : undefined;
     const counterparty =
       (foundCustomer && `${foundCustomer.kod} - ${foundCustomer.ad}`) || values.muhatap || 'Diğer';
+    const isBankToCash = values.kaynak === 'KASA_TRANSFER_BANKADAN';
     const tx: DailyTransaction = {
       id: generateId(),
       isoDate: values.islemTarihiIso,
       displayDate: isoToDisplay(values.islemTarihiIso),
       documentNo,
+      type: isBankToCash ? 'BANKA_KASA_TRANSFER' : 'NAKIT_TAHSILAT',
+      source: isBankToCash ? 'BANKA' : 'KASA',
       type: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? 'BANKA_KASA_TRANSFER' : 'NAKIT_TAHSILAT',
       source: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? 'BANKA' : 'KASA',
       counterparty,
@@ -296,9 +299,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       incoming: values.tutar,
       outgoing: 0,
       balanceAfter: 0,
-      bankId: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? values.bankaId : undefined,
-      bankDelta: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? -values.tutar : undefined,
-      displayIncoming: values.tutar,
+      bankId: isBankToCash ? values.bankaId : undefined,
+      bankDelta: isBankToCash ? -values.tutar : 0,
       createdAtIso: nowIso,
       createdBy: currentUser.email,
     };
@@ -312,11 +314,14 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     const foundSupplier = values.muhatapId ? suppliers.find((s) => s.id === values.muhatapId) : undefined;
     const counterparty =
       (foundSupplier && `${foundSupplier.kod} - ${foundSupplier.ad}`) || values.muhatap || 'Diğer';
+    const isCashToBank = values.kaynak === 'KASA_TRANSFER_BANKAYA';
     const tx: DailyTransaction = {
       id: generateId(),
       isoDate: values.islemTarihiIso,
       displayDate: isoToDisplay(values.islemTarihiIso),
       documentNo,
+      type: isCashToBank ? 'KASA_BANKA_TRANSFER' : 'NAKIT_ODEME',
+      source: 'KASA',
       type: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? 'KASA_BANKA_TRANSFER' : 'NAKIT_ODEME',
       source: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? 'BANKA' : 'KASA',
       counterparty,
@@ -324,9 +329,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       incoming: 0,
       outgoing: values.tutar,
       balanceAfter: 0,
-      bankId: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? values.bankaId : undefined,
-      bankDelta: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? values.tutar : undefined,
-      displayOutgoing: values.tutar,
+      bankId: isCashToBank ? values.bankaId : undefined,
+      bankDelta: isCashToBank ? values.tutar : 0,
       createdAtIso: nowIso,
       createdBy: currentUser.email,
     };
@@ -360,12 +364,11 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       balanceAfter: 0,
       bankId: values.bankaId,
       bankDelta: values.tutar,
-      displayIncoming: values.tutar,
       createdAtIso: nowIso,
       createdBy: currentUser.email,
     };
     if (values.islemTuru === 'CEK_TAHSILATI' && values.cekId) {
-      setCheques((prev) => prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_OLDU' } : c)));
+      setCheques((prev) => prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_EDILDI' } : c)));
     }
     addTransactions([tx]);
     setOpenForm(null);
@@ -393,7 +396,6 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         balanceAfter: 0,
         bankId: values.bankaId,
         bankDelta: -values.tutar,
-        displayOutgoing: values.tutar,
         createdAtIso: nowIso,
         createdBy: currentUser.email,
       };
@@ -411,7 +413,6 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         balanceAfter: 0,
         bankId: values.hedefBankaId,
         bankDelta: values.tutar,
-        displayIncoming: values.tutar,
         createdAtIso: nowIso,
         createdBy: currentUser.email,
       };
@@ -447,10 +448,10 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           const supplier = cheque.tedarikciId ? suppliers.find((s) => s.id === cheque.tedarikciId) : undefined;
           counterparty = supplier ? `${supplier.kod} - ${supplier.ad}` : cheque.lehtar || counterparty;
           description = `Çek No: ${cheque.cekNo}${values.aciklama ? ` – ${values.aciklama}` : ''}`;
-          setCheques((prev) =>
-            prev.map((c) => (c.id === values.cekId ? { ...c, status: 'ODEME_YAPILDI', kasaMi: false } : c))
-          );
-        }
+        setCheques((prev) =>
+          prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_EDILDI', kasaMi: false } : c))
+        );
+      }
       }
 
       if (values.islemTuru === 'TEDARIKCI_ODEME') {
@@ -469,7 +470,6 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           balanceAfter: 0,
           bankId: values.bankaId,
           bankDelta: -tutar,
-          displayOutgoing: tutar,
           createdAtIso: nowIso,
           createdBy: currentUser.email,
         };
@@ -551,6 +551,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             : values.islemTuru === 'KREDI_KARTI_ODEME'
             ? 'KREDI_KARTI_EKSTRE_ODEME'
             : 'BANKA_HAVALE_CIKIS',
+        source: values.islemTuru === 'KREDI_KARTI_ODEME' ? 'KREDI_KARTI' : 'BANKA',
         source: 'BANKA',
         counterparty,
         description,
@@ -558,8 +559,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         outgoing: 0,
         balanceAfter: 0,
         bankId: values.bankaId,
-        bankDelta: -tutar,
-        displayOutgoing: tutar,
+        bankDelta: values.islemTuru === 'KREDI_KARTI_ODEME' ? -tutar : -tutar,
+        creditCardId: values.krediKartiId,
         createdAtIso: nowIso,
         createdBy: currentUser.email,
       };

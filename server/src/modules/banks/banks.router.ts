@@ -1,47 +1,12 @@
-import { Router } from 'express';
-import {
-  listBanks,
-  getBank,
-  createBank,
-  updateBank,
-  deleteBank,
-} from './banks.controller';
-import {
-  createBankSchema,
-  updateBankSchema,
-} from './banks.validation';
-import { z } from 'zod';
+import { Request, Response, Router } from 'express';
+import { BanksController } from './banks.controller';
 
 const router = Router();
+const controller = new BanksController();
 
-/**
- * Validation middleware
- */
-function validate(schema: z.ZodSchema) {
-  return (req: any, res: any, next: any) => {
-    try {
-      schema.parse(req.body);
-      next();
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({
-          message: 'Validation error',
-          errors: error.errors,
-        });
-        return;
-      }
-      next(error);
-    }
-  };
-}
-
-/**
- * Routes
- */
-router.get('/', listBanks);
-router.post('/', validate(createBankSchema), createBank);
-router.get('/:id', getBank);
-router.put('/:id', validate(updateBankSchema), updateBank);
-router.delete('/:id', deleteBank);
+router.get('/', (req: Request, res: Response) => controller.list(req, res));
+router.post('/', (req: Request, res: Response) => controller.create(req, res));
+router.put('/:id', (req: Request, res: Response) => controller.update(req, res));
+router.delete('/:id', (req: Request, res: Response) => controller.remove(req, res));
 
 export default router;

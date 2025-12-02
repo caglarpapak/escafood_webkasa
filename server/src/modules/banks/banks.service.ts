@@ -1,191 +1,101 @@
-import { PrismaClient } from '@prisma/client';
-import prisma from '../../config/prisma';
-import {
-  CreateBankDto,
-  UpdateBankDto,
-  BankDto,
-  BankListResponse,
-} from './banks.types';
+import { prisma } from '../../config/prisma';
+import { BankRecord, BankWithBalance, CreateBankDTO, DeleteBankDTO, UpdateBankDTO } from './banks.types';
 
 export class BanksService {
-  /**
-   * Get all banks
-   */
-  async listBanks(): Promise<BankListResponse> {
-    const banks = await prisma.bank.findMany({
-      where: {
-        deletedAt: null,
-      },
-      orderBy: {
-        name: 'asc',
-      },
-    });
-
-    // Calculate current balance for each bank
-    const banksWithBalance = await Promise.all(
-      banks.map(async (bank) => {
-        const transactions = await prisma.transaction.findMany({
-          where: {
-            deletedAt: null,
-            bankId: bank.id,
+  async getAllBanksWithBalances(): Promise<BankWithBalance[]> {
+    const [banks, balanceGroups] = await prisma.$transaction([
+      prisma.bank.findMany({
+        where: { deletedAt: null },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.transaction.groupBy({
+        by: ['bankId'],
+        _sum: { bankDelta: true },
+        where: {
+          deletedAt: null,
+          bankId: {
+            not: null,
           },
-        });
+        },
+      }),
+    ]);
 
-        const currentBalance = transactions.reduce(
-          (sum, tx) => sum + Number(tx.bankDelta),
-          0
-        );
-
-        return {
-          ...this.mapToDto(bank),
-          currentBalance,
-        };
-      })
-    );
-
-    return {
-      items: banksWithBalance,
-      totalCount: banksWithBalance.length,
-    };
-  }
-
-  /**
-   * Get bank by ID
-   */
-  async getBankById(id: string): Promise<BankDto | null> {
-    const bank = await prisma.bank.findUnique({
-      where: { id },
-    });
-
-    if (!bank || bank.deletedAt) {
-      return null;
+    const balanceMap = new Map<string, number>();
+    for (const group of balanceGroups) {
+      if (group.bankId) {
+        balanceMap.set(group.bankId, Number(group._sum.bankDelta ?? 0));
+      }
     }
 
-    // Calculate current balance
-    const transactions = await prisma.transaction.findMany({
-      where: {
-        deletedAt: null,
-        bankId: bank.id,
-      },
-    });
-
-    const currentBalance = transactions.reduce(
-      (sum, tx) => sum + Number(tx.bankDelta),
-      0
-    );
-
-    return {
-      ...this.mapToDto(bank),
-      currentBalance,
-    };
+    return banks.map((bank) => ({
+      ...bank,
+      currentBalance: balanceMap.get(bank.id) ?? 0,
+    }));
   }
 
-  /**
-   * Create a new bank
-   */
-  async createBank(data: CreateBankDto, createdBy: string): Promise<BankDto> {
-    const bank = await prisma.bank.create({
+  async createBank(payload: CreateBankDTO): Promise<BankRecord> {
+    const created = await prisma.bank.create({
       data: {
-        name: data.name,
-        accountNo: data.accountNo || null,
-        iban: data.iban || null,
-        isActive: data.isActive !== undefined ? data.isActive : true,
-        createdBy,
+        name: payload.name,
+        accountNo: payload.accountNo ?? null,
+        iban: payload.iban ?? null,
+        createdBy: payload.createdBy,
       },
     });
 
-    return {
-      ...this.mapToDto(bank),
-      currentBalance: 0,
-    };
+    return created;
   }
 
-  /**
-   * Update a bank
-   */
-  async updateBank(id: string, data: UpdateBankDto, updatedBy: string): Promise<BankDto> {
-    const bank = await prisma.bank.findUnique({
-      where: { id },
-    });
-
-    if (!bank) {
-      throw new Error('Bank not found');
+  async updateBank(id: string, payload: UpdateBankDTO): Promise<BankRecord> {
+    const existing = await prisma.bank.findUnique({ where: { id } });
+    if (!existing || existing.deletedAt) {
+      throw new Error('Bank not found.');
     }
 
-    if (bank.deletedAt) {
-      throw new Error('Cannot update deleted bank');
+    const data: Record<string, unknown> = {
+      updatedAt: new Date(),
+      updatedBy: payload.updatedBy,
+    };
+
+    if (payload.name !== undefined) {
+      data.name = payload.name;
+    }
+
+    if (payload.accountNo !== undefined) {
+      data.accountNo = payload.accountNo ?? null;
+    }
+
+    if (payload.iban !== undefined) {
+      data.iban = payload.iban ?? null;
+    }
+
+    if (payload.isActive !== undefined) {
+      data.isActive = payload.isActive;
     }
 
     const updated = await prisma.bank.update({
       where: { id },
-      data: {
-        ...data,
-        updatedBy,
-        updatedAt: new Date(),
-      },
+      data,
     });
 
-    // Calculate current balance
-    const transactions = await prisma.transaction.findMany({
-      where: {
-        deletedAt: null,
-        bankId: updated.id,
-      },
-    });
-
-    const currentBalance = transactions.reduce(
-      (sum, tx) => sum + Number(tx.bankDelta),
-      0
-    );
-
-    return {
-      ...this.mapToDto(updated),
-      currentBalance,
-    };
+    return updated;
   }
 
-  /**
-   * Soft delete a bank
-   */
-  async deleteBank(id: string, deletedBy: string): Promise<void> {
-    const bank = await prisma.bank.findUnique({
-      where: { id },
-    });
-
-    if (!bank) {
-      throw new Error('Bank not found');
+  async softDeleteBank(id: string, payload: DeleteBankDTO): Promise<BankRecord> {
+    const existing = await prisma.bank.findUnique({ where: { id } });
+    if (!existing || existing.deletedAt) {
+      throw new Error('Bank not found.');
     }
 
-    if (bank.deletedAt) {
-      throw new Error('Bank already deleted');
-    }
-
-    await prisma.bank.update({
+    const deleted = await prisma.bank.update({
       where: { id },
       data: {
+        isActive: false,
         deletedAt: new Date(),
-        deletedBy,
+        deletedBy: payload.deletedBy,
       },
     });
-  }
 
-  /**
-   * Map Prisma bank to DTO
-   */
-  private mapToDto(bank: any): BankDto {
-    return {
-      id: bank.id,
-      name: bank.name,
-      accountNo: bank.accountNo,
-      iban: bank.iban,
-      isActive: bank.isActive,
-      createdAt: bank.createdAt.toISOString(),
-      createdBy: bank.createdBy,
-      updatedAt: bank.updatedAt?.toISOString() || null,
-      updatedBy: bank.updatedBy || null,
-      deletedAt: bank.deletedAt?.toISOString() || null,
-      deletedBy: bank.deletedBy || null,
-    };
+    return deleted;
   }
 }
-
