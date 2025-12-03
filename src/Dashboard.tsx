@@ -180,62 +180,102 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   }, []);
 
   useEffect(() => {
-    const payments: UpcomingPayment[] = [];
-    const today = todayIso();
+    const fetchUpcomingPayments = async () => {
+      const payments: UpcomingPayment[] = [];
+      const today = todayIso();
 
-    creditCards
-      .filter((c) => c.sonEkstreBorcu > 0)
-      .filter((card) => banks.find((b) => b.id === card.bankaId)?.krediKartiVarMi)
-      .forEach((card) => {
-        const { dueIso, dueDisplay, daysLeft } = getCreditCardNextDue(card);
-        payments.push({
-          id: `cc-${card.id}`,
-          category: 'KREDI_KARTI',
-          bankName: banks.find((b) => b.id === card.bankaId)?.bankaAdi || '-',
-          name: card.kartAdi,
-          dueDateIso: dueIso,
-          dueDateDisplay: dueDisplay,
-          amount: card.sonEkstreBorcu,
-          daysLeft,
+      creditCards
+        .filter((c) => c.sonEkstreBorcu > 0)
+        .filter((card) => banks.find((b) => b.id === card.bankaId)?.krediKartiVarMi)
+        .forEach((card) => {
+          const { dueIso, dueDisplay, daysLeft } = getCreditCardNextDue(card);
+          payments.push({
+            id: `cc-${card.id}`,
+            category: 'KREDI_KARTI',
+            bankName: banks.find((b) => b.id === card.bankaId)?.bankaAdi || '-',
+            name: card.kartAdi,
+            dueDateIso: dueIso,
+            dueDateDisplay: dueDisplay,
+            amount: card.sonEkstreBorcu,
+            daysLeft,
+          });
         });
-      });
 
-    loans
-      .filter((l) => l.aktifMi)
-      .forEach((loan) => {
-        const schedule = buildLoanSchedule(loan);
-        const nextInstallment = schedule.find((inst) => inst.dateIso >= today) || schedule[schedule.length - 1];
-        if (!nextInstallment) return;
-        payments.push({
-          id: `loan-${loan.id}`,
-          category: 'KREDI',
-          bankName: banks.find((b) => b.id === loan.bankaId)?.bankaAdi || '-',
-          name: loan.krediAdi,
-          dueDateIso: nextInstallment.dateIso,
-          dueDateDisplay: isoToDisplay(nextInstallment.dateIso),
-          amount: nextInstallment.totalPayment,
-          daysLeft: diffInDays(today, nextInstallment.dateIso),
-        });
-      });
+      // Fetch loan installments from backend
+      try {
+        const allBanks = banks.map((b) => b.id).filter(Boolean);
+        const installmentsPromises = allBanks.map((bankId) =>
+          apiGet<Array<{
+            id: string;
+            loanId: string;
+            bankId: string;
+            installmentIndex: number;
+            dueDate: string;
+            amount: number;
+            loan: { id: string; name: string } | null;
+          }>>(`/api/loans/upcoming-installments?bankId=${bankId}`).catch(() => [])
+        );
+        const installmentsArrays = await Promise.all(installmentsPromises);
+        const allInstallments = installmentsArrays.flat();
 
-    cheques
-      .filter((c) => c.tedarikciId)
-      .filter((c) => ['KASADA', 'BANKADA_TAHSILDE', 'ODEMEDE'].includes(c.status))
-      .forEach((cek) => {
-        payments.push({
-          id: `cek-${cek.id}`,
-          category: 'CEK',
-          bankName: cek.bankaAdi || '-',
-          name: cek.lehtar,
-          dueDateIso: cek.vadeTarihi,
-          dueDateDisplay: isoToDisplay(cek.vadeTarihi),
-          amount: cek.tutar,
-          daysLeft: diffInDays(today, cek.vadeTarihi),
+        allInstallments.forEach((inst) => {
+          if (inst.loan) {
+            payments.push({
+              id: `installment-${inst.id}`,
+              category: 'KREDI',
+              bankName: banks.find((b) => b.id === inst.bankId)?.bankaAdi || '-',
+              name: `${inst.loan.name} - ${inst.installmentIndex}. taksit`,
+              dueDateIso: inst.dueDate,
+              dueDateDisplay: isoToDisplay(inst.dueDate),
+              amount: inst.amount,
+              daysLeft: diffInDays(today, inst.dueDate),
+            });
+          }
         });
-      });
-    payments.sort((a, b) => a.daysLeft - b.daysLeft);
-    setUpcomingPayments(payments);
-  }, [banks, creditCards, loans, cheques]);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to fetch loan installments:', error);
+        // Fallback to local calculation if API fails
+        loans
+          .filter((l) => l.aktifMi)
+          .forEach((loan) => {
+            const schedule = buildLoanSchedule(loan);
+            const nextInstallment = schedule.find((inst) => inst.dateIso >= today) || schedule[schedule.length - 1];
+            if (!nextInstallment) return;
+            payments.push({
+              id: `loan-${loan.id}`,
+              category: 'KREDI',
+              bankName: banks.find((b) => b.id === loan.bankaId)?.bankaAdi || '-',
+              name: loan.krediAdi,
+              dueDateIso: nextInstallment.dateIso,
+              dueDateDisplay: isoToDisplay(nextInstallment.dateIso),
+              amount: nextInstallment.totalPayment,
+              daysLeft: diffInDays(today, nextInstallment.dateIso),
+            });
+          });
+      }
+
+      cheques
+        .filter((c) => c.direction === 'BORC') // Only our issued cheques (BORC) appear in upcoming payments
+        .filter((c) => ['KASADA', 'BANKADA_TAHSILDE', 'ODEMEDE'].includes(c.status))
+        .forEach((cek) => {
+          payments.push({
+            id: `cek-${cek.id}`,
+            category: 'CEK',
+            bankName: cek.bankaAdi || '-',
+            name: cek.lehtar,
+            dueDateIso: cek.vadeTarihi,
+            dueDateDisplay: isoToDisplay(cek.vadeTarihi),
+            amount: cek.tutar,
+            daysLeft: diffInDays(today, cek.vadeTarihi),
+          });
+        });
+      payments.sort((a, b) => a.daysLeft - b.daysLeft);
+      setUpcomingPayments(payments);
+    };
+
+    fetchUpcomingPayments();
+  }, [banks, creditCards, loans, cheques, dailyTransactions.length]); // Refresh when transactions change
 
   const bankDeltasById = useMemo(() => {
     return dailyTransactions.reduce((map, tx) => {
@@ -290,8 +330,6 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       isoDate: values.islemTarihiIso,
       displayDate: isoToDisplay(values.islemTarihiIso),
       documentNo,
-      type: isBankToCash ? 'BANKA_KASA_TRANSFER' : 'NAKIT_TAHSILAT',
-      source: isBankToCash ? 'BANKA' : 'KASA',
       type: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? 'BANKA_KASA_TRANSFER' : 'NAKIT_TAHSILAT',
       source: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? 'BANKA' : 'KASA',
       counterparty,
@@ -320,8 +358,6 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       isoDate: values.islemTarihiIso,
       displayDate: isoToDisplay(values.islemTarihiIso),
       documentNo,
-      type: isCashToBank ? 'KASA_BANKA_TRANSFER' : 'NAKIT_ODEME',
-      source: 'KASA',
       type: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? 'KASA_BANKA_TRANSFER' : 'NAKIT_ODEME',
       source: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? 'BANKA' : 'KASA',
       counterparty,
@@ -338,288 +374,505 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     setOpenForm(null);
   };
 
-  const handleBankaNakitGirisSaved = (values: BankaNakitGirisFormValues) => {
-    const documentNo = getNextBelgeNo('BNK-GRS', values.islemTarihiIso, dailyTransactions);
-    const nowIso = new Date().toISOString();
-    const foundCustomer = values.muhatapId ? customers.find((c) => c.id === values.muhatapId) : undefined;
-    const foundSupplier = values.muhatapId ? suppliers.find((s) => s.id === values.muhatapId) : undefined;
-    const counterparty =
-      (foundCustomer && `${foundCustomer.kod} - ${foundCustomer.ad}`) ||
-      (foundSupplier && `${foundSupplier.kod} - ${foundSupplier.ad}`) ||
-      values.muhatap ||
-      'Diğer';
-    const type: DailyTransactionType =
-      values.islemTuru === 'CEK_TAHSILATI' ? 'CEK_TAHSIL_BANKA' : 'BANKA_HAVALE_GIRIS';
-    const tx: DailyTransaction = {
-      id: generateId(),
-      isoDate: values.islemTarihiIso,
-      displayDate: isoToDisplay(values.islemTarihiIso),
-      documentNo,
-      type,
-      source: 'BANKA',
-      counterparty,
-      description: values.aciklama || '',
-      incoming: 0,
-      outgoing: 0,
-      balanceAfter: 0,
-      bankId: values.bankaId,
-      bankDelta: values.tutar,
-      createdAtIso: nowIso,
-      createdBy: currentUser.email,
-    };
-    if (values.islemTuru === 'CEK_TAHSILATI' && values.cekId) {
-      setCheques((prev) => prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_EDILDI' } : c)));
+  const handleBankaNakitGirisSaved = async (values: BankaNakitGirisFormValues) => {
+    try {
+      const documentNo = getNextBelgeNo('BNK-GRS', values.islemTarihiIso, dailyTransactions);
+      const foundCustomer = values.muhatapId ? customers.find((c) => c.id === values.muhatapId) : undefined;
+      const foundSupplier = values.muhatapId ? suppliers.find((s) => s.id === values.muhatapId) : undefined;
+      const counterparty =
+        (foundCustomer && `${foundCustomer.kod} - ${foundCustomer.ad}`) ||
+        (foundSupplier && `${foundSupplier.kod} - ${foundSupplier.ad}`) ||
+        values.muhatap ||
+        'Diğer';
+      const type: DailyTransactionType =
+        values.islemTuru === 'CEK_TAHSILATI' ? 'CEK_TAHSIL_BANKA' : 'BANKA_HAVALE_GIRIS';
+
+      // Backend'e kaydet
+      const response = await apiPost<{
+        id: string;
+        isoDate: string;
+        documentNo: string | null;
+        type: DailyTransactionType;
+        source: DailyTransactionSource;
+        counterparty: string | null;
+        description: string | null;
+        incoming: number;
+        outgoing: number;
+        balanceAfter: number;
+        bankId: string | null;
+        bankDelta: number;
+        createdAt: string;
+        createdBy: string;
+      }>('/api/transactions', {
+        isoDate: values.islemTarihiIso,
+        documentNo,
+        type,
+        source: 'BANKA',
+        counterparty,
+        description: values.aciklama || null,
+        incoming: 0,
+        outgoing: 0,
+        bankDelta: values.tutar,
+        bankId: values.bankaId,
+      });
+
+      // Backend'den gelen transaction'ı frontend formatına çevir
+      const tx: DailyTransaction = {
+        id: response.id,
+        isoDate: response.isoDate,
+        displayDate: isoToDisplay(response.isoDate),
+        documentNo: response.documentNo || '',
+        type: response.type,
+        source: response.source,
+        counterparty: response.counterparty || '',
+        description: response.description || '',
+        incoming: response.incoming,
+        outgoing: response.outgoing,
+        balanceAfter: response.balanceAfter,
+        bankId: response.bankId || undefined,
+        bankDelta: response.bankDelta || undefined,
+        createdAtIso: response.createdAt,
+        createdBy: response.createdBy,
+      };
+
+      if (values.islemTuru === 'CEK_TAHSILATI' && values.cekId) {
+        setCheques((prev) => prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_EDILDI' } : c)));
+      }
+
+      addTransactions([tx]);
+      setOpenForm(null);
+    } catch (error: any) {
+      alert(`Hata: ${error.message || 'Banka nakit girişi kaydedilemedi'}`);
     }
-    addTransactions([tx]);
-    setOpenForm(null);
   };
 
-  const handleBankaNakitCikisSaved = (values: BankaNakitCikisFormValues) => {
-    if (values.islemTuru === 'VIRMAN' && values.hedefBankaId) {
-      const documentNoCks = getNextBelgeNo('BNK-CKS', values.islemTarihiIso, dailyTransactions);
-      const documentNoGrs = getNextBelgeNo('BNK-GRS', values.islemTarihiIso, [
-        ...dailyTransactions,
-        { documentNo: documentNoCks } as DailyTransaction,
-      ]);
-      const nowIso = new Date().toISOString();
-      const outTx: DailyTransaction = {
-        id: generateId(),
-        isoDate: values.islemTarihiIso,
-        displayDate: isoToDisplay(values.islemTarihiIso),
-        documentNo: documentNoCks,
-        type: 'BANKA_HAVALE_CIKIS',
-        source: 'BANKA',
-        counterparty: values.muhatap || 'Virman',
-        description: values.aciklama || '',
-        incoming: 0,
-        outgoing: 0,
-        balanceAfter: 0,
-        bankId: values.bankaId,
-        bankDelta: -values.tutar,
-        createdAtIso: nowIso,
-        createdBy: currentUser.email,
-      };
-      const inTx: DailyTransaction = {
-        id: generateId(),
-        isoDate: values.islemTarihiIso,
-        displayDate: isoToDisplay(values.islemTarihiIso),
-        documentNo: documentNoGrs,
-        type: 'BANKA_HAVALE_GIRIS',
-        source: 'BANKA',
-        counterparty: values.muhatap || 'Virman',
-        description: `Virman - Kaynak İşlem: ${documentNoCks}`,
-        incoming: 0,
-        outgoing: 0,
-        balanceAfter: 0,
-        bankId: values.hedefBankaId,
-        bankDelta: values.tutar,
-        createdAtIso: nowIso,
-        createdBy: currentUser.email,
-      };
-      addTransactions([outTx, inTx]);
-    } else {
-      const documentNo = getNextBelgeNo('BNK-CKS', values.islemTarihiIso, dailyTransactions);
-      const nowIso = new Date().toISOString();
-      let tutar = values.tutar;
-      let aciklama = values.aciklama || '';
-      let counterparty = values.muhatap || 'Diğer';
-      let description = aciklama;
+  const handleBankaNakitCikisSaved = async (values: BankaNakitCikisFormValues) => {
+    try {
+      if (values.islemTuru === 'VIRMAN' && values.hedefBankaId) {
+        const documentNoCks = getNextBelgeNo('BNK-CKS', values.islemTarihiIso, dailyTransactions);
+        const documentNoGrs = getNextBelgeNo('BNK-GRS', values.islemTarihiIso, [
+          ...dailyTransactions,
+          { documentNo: documentNoCks } as DailyTransaction,
+        ]);
 
-      if (values.islemTuru === 'KREDI_TAKSIDI' && values.krediId) {
-        const loan = loans.find((l) => l.id === values.krediId);
-        if (loan) {
-          const schedule = buildLoanSchedule(loan);
-          const today = values.islemTarihiIso || todayIso();
-          const nextInstallment = schedule.find((inst) => inst.dateIso >= today) || schedule[schedule.length - 1];
-          if (nextInstallment) {
-            tutar = nextInstallment.totalPayment;
-            if (!aciklama) {
-              aciklama = `${loan.krediAdi} - ${nextInstallment.index}. taksit`;
-            }
-            description = aciklama;
-          }
-        }
-      }
-
-      if (values.islemTuru === 'CEK_ODEME' && values.cekId) {
-        const cheque = cheques.find((c) => c.id === values.cekId);
-        if (cheque) {
-          tutar = cheque.tutar;
-          const supplier = cheque.tedarikciId ? suppliers.find((s) => s.id === cheque.tedarikciId) : undefined;
-          counterparty = supplier ? `${supplier.kod} - ${supplier.ad}` : cheque.lehtar || counterparty;
-          description = `Çek No: ${cheque.cekNo}${values.aciklama ? ` – ${values.aciklama}` : ''}`;
-        setCheques((prev) =>
-          prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_EDILDI', kasaMi: false } : c))
-        );
-      }
-      }
-
-      if (values.islemTuru === 'TEDARIKCI_ODEME') {
-        const nowIso = new Date().toISOString();
-        const tx: DailyTransaction = {
-          id: generateId(),
+        // Backend'e kaydet - çıkış transaction'ı
+        const outResponse = await apiPost<{
+          id: string;
+          isoDate: string;
+          documentNo: string | null;
+          type: DailyTransactionType;
+          source: DailyTransactionSource;
+          counterparty: string | null;
+          description: string | null;
+          incoming: number;
+          outgoing: number;
+          balanceAfter: number;
+          bankId: string | null;
+          bankDelta: number;
+          createdAt: string;
+          createdBy: string;
+        }>('/api/transactions', {
           isoDate: values.islemTarihiIso,
-          displayDate: isoToDisplay(values.islemTarihiIso),
-          documentNo,
+          documentNo: documentNoCks,
           type: 'BANKA_HAVALE_CIKIS',
           source: 'BANKA',
-          counterparty: counterparty || 'Tedarikçi',
-          description,
+          counterparty: values.muhatap || 'Virman',
+          description: values.aciklama || null,
           incoming: 0,
           outgoing: 0,
-          balanceAfter: 0,
+          bankDelta: -values.tutar,
           bankId: values.bankaId,
-          bankDelta: -tutar,
-          createdAtIso: nowIso,
-          createdBy: currentUser.email,
+        });
+
+        // Backend'e kaydet - giriş transaction'ı
+        const inResponse = await apiPost<{
+          id: string;
+          isoDate: string;
+          documentNo: string | null;
+          type: DailyTransactionType;
+          source: DailyTransactionSource;
+          counterparty: string | null;
+          description: string | null;
+          incoming: number;
+          outgoing: number;
+          balanceAfter: number;
+          bankId: string | null;
+          bankDelta: number;
+          createdAt: string;
+          createdBy: string;
+        }>('/api/transactions', {
+          isoDate: values.islemTarihiIso,
+          documentNo: documentNoGrs,
+          type: 'BANKA_HAVALE_GIRIS',
+          source: 'BANKA',
+          counterparty: values.muhatap || 'Virman',
+          description: `Virman - Kaynak İşlem: ${documentNoCks}`,
+          incoming: 0,
+          outgoing: 0,
+          bankDelta: values.tutar,
+          bankId: values.hedefBankaId,
+        });
+
+        // Backend'den gelen transaction'ları frontend formatına çevir
+        const outTx: DailyTransaction = {
+          id: outResponse.id,
+          isoDate: outResponse.isoDate,
+          displayDate: isoToDisplay(outResponse.isoDate),
+          documentNo: outResponse.documentNo || '',
+          type: outResponse.type,
+          source: outResponse.source,
+          counterparty: outResponse.counterparty || '',
+          description: outResponse.description || '',
+          incoming: outResponse.incoming,
+          outgoing: outResponse.outgoing,
+          balanceAfter: outResponse.balanceAfter,
+          bankId: outResponse.bankId || undefined,
+          bankDelta: outResponse.bankDelta || undefined,
+          createdAtIso: outResponse.createdAt,
+          createdBy: outResponse.createdBy,
         };
+
+        const inTx: DailyTransaction = {
+          id: inResponse.id,
+          isoDate: inResponse.isoDate,
+          displayDate: isoToDisplay(inResponse.isoDate),
+          documentNo: inResponse.documentNo || '',
+          type: inResponse.type,
+          source: inResponse.source,
+          counterparty: inResponse.counterparty || '',
+          description: inResponse.description || '',
+          incoming: inResponse.incoming,
+          outgoing: inResponse.outgoing,
+          balanceAfter: inResponse.balanceAfter,
+          bankId: inResponse.bankId || undefined,
+          bankDelta: inResponse.bankDelta || undefined,
+          createdAtIso: inResponse.createdAt,
+          createdBy: inResponse.createdBy,
+        };
+
+        addTransactions([outTx, inTx]);
+        setOpenForm(null);
+        return;
+      } else {
+        const documentNo = getNextBelgeNo('BNK-CKS', values.islemTarihiIso, dailyTransactions);
+        let tutar = values.tutar;
+        let aciklama = values.aciklama || '';
+        let counterparty = values.muhatap || 'Diğer';
+        let description = aciklama;
+
+        // Handle KREDI_TAKSIDI - call the pay installment API
+        if (values.islemTuru === 'KREDI_TAKSIDI' && values.krediId) {
+          try {
+            const response = await apiPost<{
+              installment: {
+                id: string;
+                loanId: string;
+                installmentIndex: number;
+                dueDate: string;
+                amount: number;
+                loan: { name: string } | null;
+              };
+              transactionId: string;
+            }>('/api/loans/installments/' + values.krediId + '/pay', {
+              isoDate: values.islemTarihiIso,
+              description: values.aciklama || null,
+            });
+
+            // Fetch the full transaction from backend
+            const txResponse = await apiGet<{
+              id: string;
+              isoDate: string;
+              documentNo: string | null;
+              type: DailyTransactionType;
+              source: DailyTransactionSource;
+              counterparty: string | null;
+              description: string | null;
+              incoming: number;
+              outgoing: number;
+              balanceAfter: number;
+              bankId: string | null;
+              bankDelta: number;
+              createdAt: string;
+              createdBy: string;
+            }>(`/api/transactions/${response.transactionId}`);
+
+            const tx: DailyTransaction = {
+              id: txResponse.id,
+              isoDate: txResponse.isoDate,
+              displayDate: isoToDisplay(txResponse.isoDate),
+              documentNo: txResponse.documentNo || '',
+              type: txResponse.type,
+              source: txResponse.source,
+              counterparty: txResponse.counterparty || '',
+              description: txResponse.description || '',
+              incoming: txResponse.incoming,
+              outgoing: txResponse.outgoing,
+              balanceAfter: txResponse.balanceAfter,
+              bankId: txResponse.bankId || undefined,
+              bankDelta: txResponse.bankDelta || undefined,
+              createdAtIso: txResponse.createdAt,
+              createdBy: txResponse.createdBy,
+            };
+
+            addTransactions([tx]);
+            setOpenForm(null);
+            return;
+          } catch (error: any) {
+            alert(`Hata: ${error.message || 'Kredi taksidi ödemesi kaydedilemedi'}`);
+            return;
+          }
+        }
+
+        if (values.islemTuru === 'CEK_ODEME' && values.cekId) {
+          const cheque = cheques.find((c) => c.id === values.cekId);
+          if (cheque) {
+            tutar = cheque.tutar;
+            const supplier = cheque.tedarikciId ? suppliers.find((s) => s.id === cheque.tedarikciId) : undefined;
+            counterparty = supplier ? `${supplier.kod} - ${supplier.ad}` : cheque.lehtar || counterparty;
+            description = `Çek No: ${cheque.cekNo}${values.aciklama ? ` – ${values.aciklama}` : ''}`;
+            setCheques((prev) =>
+              prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_EDILDI', kasaMi: false } : c))
+            );
+          }
+        }
+
+        if (values.islemTuru === 'KREDI_KARTI_ODEME' && values.krediKartiId) {
+          const card = creditCards.find((c) => c.id === values.krediKartiId);
+          if (!card) {
+            setOpenForm(null);
+            return;
+          }
+
+          try {
+            const response = await apiPost<{
+              operation: {
+                id: string;
+                creditCardId: string;
+                isoDate: string;
+                type: string;
+                amount: number;
+              };
+              transaction: {
+                id: string;
+                isoDate: string;
+                type: string;
+                source: string;
+                bankId: string | null;
+                bankDelta: number;
+                outgoing: number;
+              };
+            }>('/api/credit-cards/payment', {
+              creditCardId: values.krediKartiId,
+              isoDate: values.islemTarihiIso,
+              amount: values.tutar,
+              description: values.aciklama || null,
+              paymentSource: 'BANKA', // Always from bank in this flow
+              bankId: values.bankaId || null,
+            });
+
+            // Map backend transaction to frontend format
+            const tx: DailyTransaction = {
+              id: response.transaction.id,
+              isoDate: response.transaction.isoDate,
+              displayDate: isoToDisplay(response.transaction.isoDate),
+              documentNo,
+              type: response.transaction.type as DailyTransactionType,
+              source: response.transaction.source as DailyTransactionSource,
+              counterparty: card.kartAdi,
+              description: values.aciklama || '',
+              incoming: 0,
+              outgoing: response.transaction.outgoing,
+              balanceAfter: 0, // Will be recalculated
+              bankId: response.transaction.bankId || undefined,
+              bankDelta: response.transaction.bankDelta,
+              createdAtIso: new Date().toISOString(),
+              createdBy: currentUser.email,
+            };
+
+            addTransactions([tx]);
+            setOpenForm(null);
+            return;
+          } catch (error: any) {
+            alert(`Hata: ${error.message || 'Kredi kartı ödemesi kaydedilemedi'}`);
+            return;
+          }
+        }
+
+        // Backend'e kaydet
+        const response = await apiPost<{
+          id: string;
+          isoDate: string;
+          documentNo: string | null;
+          type: DailyTransactionType;
+          source: DailyTransactionSource;
+          counterparty: string | null;
+          description: string | null;
+          incoming: number;
+          outgoing: number;
+          balanceAfter: number;
+          bankId: string | null;
+          bankDelta: number;
+          createdAt: string;
+          createdBy: string;
+        }>('/api/transactions', {
+          isoDate: values.islemTarihiIso,
+          documentNo,
+          type: values.islemTuru === 'CEK_ODEME' ? 'CEK_ODENMESI' : 'BANKA_HAVALE_CIKIS',
+          source: 'BANKA',
+          counterparty: counterparty || 'Diğer',
+          description: description || null,
+          incoming: 0,
+          outgoing: 0,
+          bankDelta: -tutar,
+          bankId: values.bankaId,
+        });
+
+        // Backend'den gelen transaction'ı frontend formatına çevir
+        const tx: DailyTransaction = {
+          id: response.id,
+          isoDate: response.isoDate,
+          displayDate: isoToDisplay(response.isoDate),
+          documentNo: response.documentNo || '',
+          type: response.type,
+          source: response.source,
+          counterparty: response.counterparty || '',
+          description: response.description || '',
+          incoming: response.incoming,
+          outgoing: response.outgoing,
+          balanceAfter: response.balanceAfter,
+          bankId: response.bankId || undefined,
+          bankDelta: response.bankDelta || undefined,
+          createdAtIso: response.createdAt,
+          createdBy: response.createdBy,
+        };
+
         addTransactions([tx]);
         setOpenForm(null);
         return;
       }
-
-      if (values.islemTuru === 'KREDI_KARTI_ODEME' && values.krediKartiId) {
-        const card = creditCards.find((c) => c.id === values.krediKartiId);
-        if (!card) {
-          setOpenForm(null);
-          return;
-        }
-
-        try {
-          const response = await apiPost<{
-            operation: {
-              id: string;
-              creditCardId: string;
-              isoDate: string;
-              type: string;
-              amount: number;
-            };
-            transaction: {
-              id: string;
-              isoDate: string;
-              type: string;
-              source: string;
-              bankId: string | null;
-              bankDelta: number;
-              outgoing: number;
-            };
-          }>('/api/credit-cards/payment', {
-            creditCardId: values.krediKartiId,
-            isoDate: values.islemTarihiIso,
-            amount: values.tutar,
-            description: values.aciklama || null,
-            paymentSource: 'BANKA', // Always from bank in this flow
-            bankId: values.bankaId || null,
-          });
-
-          // Map backend transaction to frontend format
-          const tx: DailyTransaction = {
-            id: response.transaction.id,
-            isoDate: response.transaction.isoDate,
-            displayDate: isoToDisplay(response.transaction.isoDate),
-            documentNo,
-            type: response.transaction.type as DailyTransactionType,
-            source: response.transaction.source as DailyTransactionSource,
-            counterparty: card.kartAdi,
-            description: values.aciklama || '',
-            incoming: 0,
-            outgoing: response.transaction.outgoing,
-            balanceAfter: 0, // Will be recalculated
-            bankId: response.transaction.bankId || undefined,
-            bankDelta: response.transaction.bankDelta,
-            createdAtIso: nowIso,
-            createdBy: currentUser.email,
-          };
-
-          addTransactions([tx]);
-          setOpenForm(null);
-          return;
-        } catch (error: any) {
-          alert(`Hata: ${error.message || 'Kredi kartı ödemesi kaydedilemedi'}`);
-          return;
-        }
-      }
-
-      const tx: DailyTransaction = {
-        id: generateId(),
-        isoDate: values.islemTarihiIso,
-        displayDate: isoToDisplay(values.islemTarihiIso),
-        documentNo,
-        type:
-          values.islemTuru === 'CEK_ODEME'
-            ? 'CEK_ODENMESI'
-            : values.islemTuru === 'KREDI_KARTI_ODEME'
-            ? 'KREDI_KARTI_EKSTRE_ODEME'
-            : 'BANKA_HAVALE_CIKIS',
-        source: values.islemTuru === 'KREDI_KARTI_ODEME' ? 'KREDI_KARTI' : 'BANKA',
-        source: 'BANKA',
-        counterparty,
-        description,
-        incoming: 0,
-        outgoing: 0,
-        balanceAfter: 0,
-        bankId: values.bankaId,
-        bankDelta: values.islemTuru === 'KREDI_KARTI_ODEME' ? -tutar : -tutar,
-        creditCardId: values.krediKartiId,
-        createdAtIso: nowIso,
-        createdBy: currentUser.email,
-      };
-      addTransactions([tx]);
+    } catch (error: any) {
+      alert(`Hata: ${error.message || 'Banka nakit çıkışı kaydedilemedi'}`);
     }
-    setOpenForm(null);
   };
 
-  const handlePosTahsilatSaved = (values: PosTahsilatFormValues) => {
-    const customer = customers.find((c) => c.id === values.customerId);
-    const bank = banks.find((b) => b.id === values.bankaId);
-    if (!customer || !bank) {
+
+  const handlePosTahsilatSaved = async (values: PosTahsilatFormValues) => {
+    try {
+      const customer = customers.find((c) => c.id === values.customerId);
+      const bank = banks.find((b) => b.id === values.bankaId);
+      if (!customer || !bank) {
+        setOpenForm(null);
+        return;
+      }
+      const documentNo = getNextBelgeNo('BNK-GRS', values.islemTarihiIso, dailyTransactions);
+      const counterparty = `${customer.kod} - ${customer.ad}`;
+
+      // Create POS tahsilat (brut) transaction
+      const brutResponse = await apiPost<{
+        id: string;
+        isoDate: string;
+        documentNo: string | null;
+        type: DailyTransactionType;
+        source: DailyTransactionSource;
+        counterparty: string | null;
+        description: string | null;
+        incoming: number;
+        outgoing: number;
+        balanceAfter: number;
+        bankId: string | null;
+        bankDelta: number;
+        displayIncoming: number | null;
+        createdAt: string;
+        createdBy: string;
+      }>('/api/transactions', {
+        isoDate: values.islemTarihiIso,
+        documentNo,
+        type: 'POS_TAHSILAT_BRUT',
+        source: 'POS',
+        counterparty,
+        description: values.aciklama || null,
+        incoming: 0,
+        outgoing: 0,
+        bankDelta: values.netTutar,
+        bankId: values.bankaId,
+        displayIncoming: values.brutTutar,
+      });
+
+      // Create POS komisyon transaction
+      const komisyonResponse = await apiPost<{
+        id: string;
+        isoDate: string;
+        documentNo: string | null;
+        type: DailyTransactionType;
+        source: DailyTransactionSource;
+        counterparty: string | null;
+        description: string | null;
+        incoming: number;
+        outgoing: number;
+        balanceAfter: number;
+        bankId: string | null;
+        bankDelta: number;
+        displayOutgoing: number | null;
+        createdAt: string;
+        createdBy: string;
+      }>('/api/transactions', {
+        isoDate: values.islemTarihiIso,
+        documentNo: `${documentNo}-KOM`,
+        type: 'POS_KOMISYONU',
+        source: 'POS',
+        counterparty,
+        description: values.aciklama || 'POS Komisyonu',
+        incoming: 0,
+        outgoing: 0,
+        bankDelta: 0,
+        bankId: values.bankaId,
+        displayOutgoing: values.komisyonTutar,
+      });
+
+      // Map backend responses to frontend format
+      const brutTx: DailyTransaction = {
+        id: brutResponse.id,
+        isoDate: brutResponse.isoDate,
+        displayDate: isoToDisplay(brutResponse.isoDate),
+        documentNo: brutResponse.documentNo || '',
+        type: brutResponse.type,
+        source: brutResponse.source,
+        counterparty: brutResponse.counterparty || '',
+        description: brutResponse.description || '',
+        incoming: brutResponse.incoming,
+        outgoing: brutResponse.outgoing,
+        balanceAfter: brutResponse.balanceAfter,
+        bankId: brutResponse.bankId || undefined,
+        bankDelta: brutResponse.bankDelta || undefined,
+        displayIncoming: brutResponse.displayIncoming || undefined,
+        createdAtIso: brutResponse.createdAt,
+        createdBy: brutResponse.createdBy,
+      };
+
+      const komisyonTx: DailyTransaction = {
+        id: komisyonResponse.id,
+        isoDate: komisyonResponse.isoDate,
+        displayDate: isoToDisplay(komisyonResponse.isoDate),
+        documentNo: komisyonResponse.documentNo || '',
+        type: komisyonResponse.type,
+        source: komisyonResponse.source,
+        counterparty: komisyonResponse.counterparty || '',
+        description: komisyonResponse.description || '',
+        incoming: komisyonResponse.incoming,
+        outgoing: komisyonResponse.outgoing,
+        balanceAfter: komisyonResponse.balanceAfter,
+        bankId: komisyonResponse.bankId || undefined,
+        bankDelta: komisyonResponse.bankDelta || undefined,
+        displayOutgoing: komisyonResponse.displayOutgoing || undefined,
+        createdAtIso: komisyonResponse.createdAt,
+        createdBy: komisyonResponse.createdBy,
+      };
+
+      addTransactions([brutTx, komisyonTx]);
       setOpenForm(null);
-      return;
+    } catch (error: any) {
+      alert(`Hata: ${error.message || 'POS tahsilat kaydedilemedi'}`);
     }
-    const documentNo = getNextBelgeNo('BNK-GRS', values.islemTarihiIso, dailyTransactions);
-    const nowIso = new Date().toISOString();
-    const counterparty = `${customer.kod} - ${customer.ad}`;
-    const brutTx: DailyTransaction = {
-      id: generateId(),
-      isoDate: values.islemTarihiIso,
-      displayDate: isoToDisplay(values.islemTarihiIso),
-      documentNo,
-      type: 'POS_TAHSILAT_BRUT',
-      source: 'POS',
-      counterparty,
-      description: values.aciklama || '',
-      incoming: 0,
-      outgoing: 0,
-      balanceAfter: 0,
-      bankId: values.bankaId,
-      bankDelta: values.netTutar,
-      displayIncoming: values.brutTutar,
-      createdAtIso: nowIso,
-      createdBy: currentUser.email,
-      attachmentType: 'POS_SLIP',
-      attachmentImageDataUrl: values.slipImageDataUrl,
-      attachmentImageName: values.slipImageName,
-    };
-    const komisyonTx: DailyTransaction = {
-      id: generateId(),
-      isoDate: values.islemTarihiIso,
-      displayDate: isoToDisplay(values.islemTarihiIso),
-      documentNo: `${documentNo}-KOM`,
-      type: 'POS_KOMISYONU',
-      source: 'POS',
-      counterparty,
-      description: values.aciklama || 'POS Komisyonu',
-      incoming: 0,
-      outgoing: 0,
-      balanceAfter: 0,
-      bankId: values.bankaId,
-      bankDelta: 0,
-      displayOutgoing: values.komisyonTutar,
-      createdAtIso: nowIso,
-      createdBy: currentUser.email,
-    };
-    addTransactions([brutTx, komisyonTx]);
-    setOpenForm(null);
   };
 
   const handleKrediKartiTedarikciSaved = async (values: KrediKartiTedarikciOdemeFormValues) => {
@@ -1075,7 +1328,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         )}
         {activeView === 'NAKIT_AKIS' && (
           <div className="p-4">
-            <NakitAkisReport banks={banks} onBackToDashboard={handleBackToDashboard} />
+            <NakitAkisReport transactions={dailyTransactions} banks={banks} onBackToDashboard={handleBackToDashboard} />
           </div>
         )}
         {activeView === 'CEK_SENET' && (
