@@ -260,9 +260,9 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           source: tx.source,
           counterparty: tx.counterparty || '',
           description: tx.description || '',
-          incoming: tx.incoming,
-          outgoing: tx.outgoing,
-          balanceAfter: tx.balanceAfter, // Use balanceAfter from backend
+          incoming: Number(tx.incoming) || 0, // Ensure number type
+          outgoing: Number(tx.outgoing) || 0, // Ensure number type - Fix: Preserve 0 values
+          balanceAfter: Number(tx.balanceAfter) || 0, // Use balanceAfter from backend
           bankId: tx.bankId || undefined,
           bankDelta: tx.bankDelta || undefined,
           displayIncoming: tx.displayIncoming || undefined,
@@ -1535,7 +1535,11 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                           {tx.displayIncoming !== undefined ? formatTl(tx.displayIncoming) : tx.incoming ? formatTl(tx.incoming) : '-'}
                         </td>
                         <td className="py-2 px-2 text-right text-rose-600">
-                          {tx.displayOutgoing !== undefined ? formatTl(tx.displayOutgoing) : tx.outgoing ? formatTl(tx.outgoing) : '-'}
+                          {tx.displayOutgoing !== undefined 
+                            ? formatTl(tx.displayOutgoing) 
+                            : (tx.outgoing !== undefined && tx.outgoing !== null && tx.outgoing > 0) 
+                              ? formatTl(tx.outgoing) 
+                              : '-'}
                         </td>
                         <td className="py-2 px-2 text-right font-semibold">{formatTl(tx.balanceAfter)}</td>
                         <td className="py-2 px-2 text-right">
