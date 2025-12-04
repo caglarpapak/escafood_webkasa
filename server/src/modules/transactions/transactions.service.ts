@@ -13,6 +13,19 @@ import {
  * IMPORTANT: Only transactions with source = KASA affect the main cash balance.
  * Bank transactions (source = BANKA) do NOT affect the main cash balance.
  */
+/**
+ * Calculate cash balance after a transaction
+ * BUG 1 FIX: Cash balance = startCash (0) + Σ(cashDelta) in chronological order
+ * where cashDelta = incoming - outgoing for KASA transactions only
+ * 
+ * Test scenario:
+ * - starting cash = 0
+ * - row1: NAKIT_TAHSILAT (KASA) 20.000 → balance 20.000
+ * - row2: NAKIT_ODEME (KASA) 10.000 → balance 10.000
+ * - row3: NAKIT_TAHSILAT (KASA) 50.000 → balance 60.000
+ * 
+ * At no point should the balance show 30.000, -10.000 or any other incorrect value.
+ */
 async function calculateBalanceAfter(
   isoDate: string,
   incoming: number,
@@ -38,14 +51,19 @@ async function calculateBalanceAfter(
     ],
   });
 
+  // BUG 1 FIX: Start from 0, accumulate cashDelta = incoming - outgoing for KASA transactions
+  // cashDelta > 0 for cash-in (NAKIT_TAHSILAT with source KASA)
+  // cashDelta < 0 for cash-out (NAKIT_ODEME with source KASA)
   let balance = 0;
   for (const tx of transactions) {
-    balance += Number(tx.incoming) - Number(tx.outgoing);
+    const cashDelta = Number(tx.incoming) - Number(tx.outgoing);
+    balance += cashDelta;
   }
 
   // Only add current transaction if it's a KASA transaction
   if (source === 'KASA') {
-    balance += incoming - outgoing;
+    const cashDelta = incoming - outgoing;
+    balance += cashDelta;
   }
 
   return balance;
@@ -292,6 +310,11 @@ export class TransactionsService {
   async listTransactions(query: TransactionListQuery): Promise<TransactionListResponse> {
     const where: any = {
       deletedAt: null,
+      // BUG 2 FIX: Exclude synthetic "Açılış bakiyesi" transactions from daily transaction list
+      // These are created for bank opening balances but should not appear in "Gün içi işlemler"
+      description: {
+        not: 'Açılış bakiyesi',
+      },
     };
 
     if (query.from || query.to) {

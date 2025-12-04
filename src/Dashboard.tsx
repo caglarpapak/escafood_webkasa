@@ -104,6 +104,9 @@ function mergeTransactions(
   existing: DailyTransaction[],
   additions: DailyTransaction[]
 ): DailyTransaction[] {
+  // BUG 1 FIX: Use balanceAfter from backend, don't recalculate
+  // Backend already calculates balanceAfter correctly starting from 0
+  // Frontend recalcBalances uses BASE_CASH_BALANCE which causes inconsistency
   const duplicates = new Set(
     existing.map(
       (t) => `${t.isoDate}|${t.documentNo}|${t.type}|${t.incoming}|${t.outgoing}|${t.counterparty}`
@@ -112,7 +115,25 @@ function mergeTransactions(
   const filtered = additions.filter(
     (t) => !duplicates.has(`${t.isoDate}|${t.documentNo}|${t.type}|${t.incoming}|${t.outgoing}|${t.counterparty}`)
   );
-  return recalcBalances([...existing, ...filtered]);
+  // BUG 1 FIX: Don't recalculate - use balanceAfter from backend
+  // Sort by date and documentNo to maintain order
+  const merged = [...existing, ...filtered].sort((a, b) => {
+    if (a.isoDate === b.isoDate) return a.documentNo.localeCompare(b.documentNo);
+    return a.isoDate.localeCompare(b.isoDate);
+  });
+  
+  // For non-KASA transactions, set balanceAfter to last KASA transaction's balanceAfter
+  let lastKasaBalance = BASE_CASH_BALANCE;
+  return merged.map((tx) => {
+    if (tx.source === 'KASA') {
+      // BUG 1 FIX: Use balanceAfter from backend (already calculated correctly)
+      // Backend calculates: balance = 0 + Σ(incoming - outgoing) for KASA transactions
+      lastKasaBalance = tx.balanceAfter ?? lastKasaBalance;
+      return tx;
+    }
+    // For non-KASA transactions, show the last KASA balance
+    return { ...tx, balanceAfter: lastKasaBalance };
+  });
 }
 
 export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
@@ -357,12 +378,22 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     [banks, bankDeltasById]
   );
 
-  // Calculate cash balance from only KASA transactions (bank transactions don't affect main cash)
+  // BUG 1 FIX: Calculate cash balance from backend balanceAfter values
+  // Backend already calculates balanceAfter correctly starting from 0
+  // Use the last KASA transaction's balanceAfter, or BASE_CASH_BALANCE if no transactions
   const cashBalance = useMemo(() => {
     const kasaTransactions = dailyTransactions.filter((tx) => tx.source === 'KASA');
     if (kasaTransactions.length === 0) return BASE_CASH_BALANCE;
-    const sorted = recalcBalances(kasaTransactions);
-    return sorted.length ? sorted[sorted.length - 1].balanceAfter : BASE_CASH_BALANCE;
+    // BUG 1 FIX: Use balanceAfter from backend (already calculated correctly)
+    // Sort by date to get the last transaction
+    const sorted = [...kasaTransactions].sort((a, b) => {
+      if (a.isoDate === b.isoDate) return a.documentNo.localeCompare(b.documentNo);
+      return a.isoDate.localeCompare(b.isoDate);
+    });
+    const lastTx = sorted[sorted.length - 1];
+    // BUG 1 FIX: Use balanceAfter from backend, not recalculated value
+    // Test scenario: starting cash=0, Cash In 20.000 → balance 20.000, Cash Out 10.000 → balance 10.000, Cash In 50.000 → balance 60.000
+    return lastTx.balanceAfter ?? BASE_CASH_BALANCE;
   }, [dailyTransactions]);
 
   const chequesInCash = cheques.filter((c) => c.status === 'KASADA');
@@ -1383,7 +1414,38 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
 
   const removeTransaction = (id: string) => {
     if (!window.confirm('Bu satırı silmek istediğinize emin misiniz?')) return;
-    setDailyTransactions((prev) => recalcBalances(prev.filter((t) => t.id !== id)));
+    // BUG 1 FIX: After deleting a transaction, re-fetch from backend to get correct balanceAfter values
+    // Don't use recalcBalances which uses BASE_CASH_BALANCE and causes inconsistency
+    try {
+      const today = todayIso();
+      const response = await apiGet<{ items: any[]; totalCount: number }>(
+        `/api/transactions?from=${today}&to=${today}&sortKey=isoDate&sortDir=asc`
+      );
+      const mapped = response.items.map((tx) => ({
+        id: tx.id,
+        isoDate: tx.isoDate,
+        displayDate: isoToDisplay(tx.isoDate),
+        documentNo: tx.documentNo || '',
+        type: tx.type,
+        source: tx.source,
+        counterparty: tx.counterparty || '',
+        description: tx.description || '',
+        incoming: Number(tx.incoming) ?? 0,
+        outgoing: Number(tx.outgoing) ?? 0,
+        balanceAfter: Number(tx.balanceAfter) ?? 0, // BUG 1 FIX: Use balanceAfter from backend
+        bankId: tx.bankId || undefined,
+        bankDelta: tx.bankDelta || undefined,
+        displayIncoming: tx.displayIncoming || undefined,
+        displayOutgoing: tx.displayOutgoing || undefined,
+        createdAtIso: tx.createdAt,
+        createdBy: tx.createdBy,
+      }));
+      setDailyTransactions(mapped);
+    } catch (error) {
+      console.error('Failed to refresh transactions after delete:', error);
+      // Fallback: just remove the transaction from local state
+      setDailyTransactions((prev) => prev.filter((t) => t.id !== id));
+    }
   };
 
   const todayDisplay = isoToDisplay(today);

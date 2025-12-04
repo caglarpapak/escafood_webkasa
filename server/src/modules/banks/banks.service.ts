@@ -91,7 +91,9 @@ export class BanksService {
       },
     });
 
-    // Create opening balance transaction if initialBalance is provided and non-zero
+    // BUG 2 FIX: Create opening balance transaction but it will be filtered from daily transaction list
+    // This transaction is needed for balance calculation (bankDelta) but won't appear in "Gün içi işlemler"
+    // The transaction has description "Açılış bakiyesi" which is filtered in listTransactions
     const initialBalance = payload.initialBalance ?? 0;
     if (initialBalance !== 0) {
       // Use today's date for opening balance transaction
