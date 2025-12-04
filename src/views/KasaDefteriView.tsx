@@ -4,6 +4,7 @@ import {
   getTransactionSourceLabel,
   getTransactionTypeLabel,
 } from '../models/transaction';
+import { BankMaster } from '../models/bank';
 import { isoToDisplay } from '../utils/date';
 import { formatTl } from '../utils/money';
 import { HomepageIcon } from '../components/HomepageIcon';
@@ -11,9 +12,17 @@ import { apiGet } from '../utils/api';
 
 interface KasaDefteriViewProps {
   onBackToDashboard: () => void;
+  banks: BankMaster[];
 }
 
-type SortKey = 'isoDate' | 'documentNo' | 'type' | 'counterparty' | 'incoming' | 'outgoing' | 'balanceAfter';
+type SortKey =
+  | 'isoDate'
+  | 'documentNo'
+  | 'type'
+  | 'counterparty'
+  | 'incoming'
+  | 'outgoing'
+  | 'balanceAfter';
 type SortDir = 'asc' | 'desc';
 
 type QuickRange = 'NONE' | 'TODAY' | 'WEEK' | 'MONTH' | 'YEAR';
@@ -54,7 +63,7 @@ const sorters: Record<SortKey, (a: DailyTransaction, b: DailyTransaction) => num
   balanceAfter: (a, b) => a.balanceAfter - b.balanceAfter,
 };
 
-export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewProps) {
+export default function KasaDefteriView({ onBackToDashboard, banks }: KasaDefteriViewProps) {
   const [transactions, setTransactions] = useState<DailyTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterStartIso, setFilterStartIso] = useState('');
@@ -132,10 +141,10 @@ export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewPr
           incoming: tx.incoming,
           outgoing: tx.outgoing,
           balanceAfter: tx.balanceAfter, // Use balanceAfter from backend
-          bankId: undefined,
-          bankDelta: undefined,
-          displayIncoming: undefined,
-          displayOutgoing: undefined,
+          bankId: tx.bankId || undefined,
+          bankDelta: tx.bankDelta,
+          displayIncoming: tx.displayIncoming ?? undefined,
+          displayOutgoing: tx.displayOutgoing ?? undefined,
         }));
 
         setTransactions(mapped);
@@ -170,6 +179,8 @@ export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewPr
     if (value === undefined || value === 0) return '-';
     return formatTl(value);
   };
+
+  const resolveBankName = (bankId?: string) => banks.find((b) => b.id === bankId)?.bankaAdi || '-';
 
   const renderCreated = (tx: DailyTransaction) => {
     if (tx.createdAtIso && tx.createdBy) {
@@ -329,6 +340,7 @@ export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewPr
                 Tür
               </th>
               <th className="py-2 px-2 text-left">Kaynak</th>
+              <th className="py-2 px-2 text-left">Banka</th>
               <th className="py-2 px-2 text-left cursor-pointer" onClick={() => toggleSort('counterparty')}>
                 Muhatap
               </th>
@@ -355,14 +367,17 @@ export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewPr
               </tr>
             )}
             {sortedTransactions.map((tx) => {
-              const incomingVal = tx.displayIncoming ?? tx.incoming;
-              const outgoingVal = tx.displayOutgoing ?? tx.outgoing;
+              const incomingVal =
+                tx.displayIncoming ?? tx.incoming ?? (tx.bankDelta && tx.bankDelta > 0 ? tx.bankDelta : 0);
+              const outgoingVal =
+                tx.displayOutgoing ?? tx.outgoing ?? (tx.bankDelta && tx.bankDelta < 0 ? Math.abs(tx.bankDelta) : 0);
               return (
                 <tr key={tx.id} className="border-b last:border-0">
                   <td className="py-2 px-2">{tx.displayDate}</td>
                   <td className="py-2 px-2">{tx.documentNo}</td>
                   <td className="py-2 px-2">{getTransactionTypeLabel(tx.type)}</td>
                   <td className="py-2 px-2">{getTransactionSourceLabel(tx.source)}</td>
+                  <td className="py-2 px-2">{tx.bankId ? resolveBankName(tx.bankId) : '-'}</td>
                   <td className="py-2 px-2">{tx.counterparty}</td>
                   <td className="py-2 px-2">{tx.description}</td>
                   <td className="py-2 px-2">

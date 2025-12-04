@@ -16,7 +16,8 @@ import { getNextBelgeNo } from './utils/documentNo';
 import { generateId } from './utils/id';
 import { buildLoanSchedule } from './utils/loan';
 import { getCreditCardNextDue } from './utils/creditCard';
-import { apiGet, apiPost } from './utils/api';
+import { apiGet, apiPost, createTransaction, CreateTransactionRequest } from './utils/api';
+import useBanks from './hooks/useBanks';
 import NakitGiris, { NakitGirisFormValues } from './forms/NakitGiris';
 import NakitCikis, { NakitCikisFormValues } from './forms/NakitCikis';
 import BankaNakitGiris, { BankaNakitGirisFormValues } from './forms/BankaNakitGiris';
@@ -92,41 +93,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   const [openSection, setOpenSection] = useState<Record<string, boolean>>({});
   const [activeView, setActiveView] = useState<ActiveView>('DASHBOARD');
 
-  const [banks, setBanks] = useState<BankMaster[]>([
-    {
-      id: generateId(),
-      bankaAdi: 'Yapı Kredi',
-      kodu: 'YKB',
-      hesapAdi: 'YKB-Vadesiz TL',
-      acilisBakiyesi: 0,
-      aktifMi: true,
-      cekKarnesiVarMi: true,
-      posVarMi: false,
-      krediKartiVarMi: false,
-    },
-    {
-      id: generateId(),
-      bankaAdi: 'Enpara',
-      kodu: 'ENPR',
-      hesapAdi: 'ENPR-Vadesiz TL',
-      acilisBakiyesi: 0,
-      aktifMi: true,
-      cekKarnesiVarMi: true,
-      posVarMi: false,
-      krediKartiVarMi: false,
-    },
-    {
-      id: generateId(),
-      bankaAdi: 'Halkbank',
-      kodu: 'HALK',
-      hesapAdi: 'HALK-Vadesiz TL',
-      acilisBakiyesi: 0,
-      aktifMi: true,
-      cekKarnesiVarMi: false,
-      posVarMi: false,
-      krediKartiVarMi: false,
-    },
-  ]);
+  const { banks, setBanks } = useBanks();
   const [posTerminals, setPosTerminals] = useState<PosTerminal[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -338,9 +305,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     setOpenForm(null);
   };
 
-  const handleBankaNakitGirisSaved = (values: BankaNakitGirisFormValues) => {
+  const handleBankaNakitGirisSaved = async (values: BankaNakitGirisFormValues) => {
     const documentNo = getNextBelgeNo('BNK-GRS', values.islemTarihiIso, dailyTransactions);
-    const nowIso = new Date().toISOString();
     const foundCustomer = values.muhatapId ? customers.find((c) => c.id === values.muhatapId) : undefined;
     const foundSupplier = values.muhatapId ? suppliers.find((s) => s.id === values.muhatapId) : undefined;
     const counterparty =
@@ -350,28 +316,55 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       'Diğer';
     const type: DailyTransactionType =
       values.islemTuru === 'CEK_TAHSILATI' ? 'CEK_TAHSIL_BANKA' : 'BANKA_HAVALE_GIRIS';
-    const tx: DailyTransaction = {
-      id: generateId(),
+
+    const payload: CreateTransactionRequest = {
       isoDate: values.islemTarihiIso,
-      displayDate: isoToDisplay(values.islemTarihiIso),
       documentNo,
       type,
       source: 'BANKA',
       counterparty,
-      description: values.aciklama || '',
+      description: values.aciklama || null,
       incoming: 0,
       outgoing: 0,
-      balanceAfter: 0,
-      bankId: values.bankaId,
       bankDelta: values.tutar,
-      createdAtIso: nowIso,
-      createdBy: currentUser.email,
+      bankId: values.bankaId || null,
+      chequeId: values.islemTuru === 'CEK_TAHSILATI' ? values.cekId || null : null,
+      customerId: values.islemTuru === 'MUSTERI_EFT' ? values.muhatapId || null : null,
+      supplierId: values.islemTuru === 'TEDARIKCI_EFT' ? values.muhatapId || null : null,
     };
-    if (values.islemTuru === 'CEK_TAHSILATI' && values.cekId) {
-      setCheques((prev) => prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_EDILDI' } : c)));
+
+    try {
+      const created = await createTransaction(payload);
+
+      if (values.islemTuru === 'CEK_TAHSILATI' && values.cekId) {
+        setCheques((prev) => prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_EDILDI' } : c)));
+      }
+
+      const tx: DailyTransaction = {
+        id: created.id,
+        isoDate: created.isoDate,
+        displayDate: isoToDisplay(created.isoDate),
+        documentNo: created.documentNo || documentNo,
+        type: created.type as DailyTransactionType,
+        source: created.source as DailyTransactionSource,
+        counterparty: created.counterparty || counterparty,
+        description: created.description || '',
+        incoming: created.incoming,
+        outgoing: created.outgoing,
+        balanceAfter: created.balanceAfter,
+        bankId: created.bankId || undefined,
+        bankDelta: created.bankDelta,
+        displayIncoming: created.displayIncoming ?? undefined,
+        displayOutgoing: created.displayOutgoing ?? undefined,
+        createdAtIso: created.createdAt,
+        createdBy: created.createdBy,
+      };
+
+      addTransactions([tx]);
+      setOpenForm(null);
+    } catch (error: any) {
+      alert(`Hata: ${error.message || 'Banka nakit giriş kaydedilemedi'}`);
     }
-    addTransactions([tx]);
-    setOpenForm(null);
   };
 
   const handleBankaNakitCikisSaved = (values: BankaNakitCikisFormValues) => {
@@ -1060,7 +1053,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         )}
         {activeView === 'KASA_DEFTERI' && (
           <div className="p-4">
-            <KasaDefteriView onBackToDashboard={handleBackToDashboard} />
+            <KasaDefteriView onBackToDashboard={handleBackToDashboard} banks={banks} />
           </div>
         )}
         {activeView === 'ISLEM_LOGU' && (

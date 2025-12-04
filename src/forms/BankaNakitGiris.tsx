@@ -18,7 +18,7 @@ export type BankaNakitGirisTuru =
 
 export interface BankaNakitGirisFormValues {
   islemTarihiIso: string;
-  bankaId: string;
+  bankaId: string | null;
   islemTuru: BankaNakitGirisTuru;
   muhatapId?: string;
   muhatap?: string;
@@ -31,7 +31,7 @@ export interface BankaNakitGirisFormValues {
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  onSaved: (values: BankaNakitGirisFormValues) => void;
+  onSaved: (values: BankaNakitGirisFormValues) => void | Promise<void>;
   currentUserEmail: string;
   banks: BankMaster[];
   customers: Customer[];
@@ -56,7 +56,7 @@ export default function BankaNakitGiris({
   suppliers,
 }: Props) {
   const [islemTarihiIso, setIslemTarihiIso] = useState(todayIso());
-  const [bankaId, setBankaId] = useState('');
+  const [bankaId, setBankaId] = useState<string | null>(null);
   const [islemTuru, setIslemTuru] = useState<BankaNakitGirisTuru>('MUSTERI_EFT');
   const [muhatapId, setMuhatapId] = useState<string | null>(null);
   const [muhatap, setMuhatap] = useState('');
@@ -67,7 +67,7 @@ export default function BankaNakitGiris({
   useEffect(() => {
     if (isOpen) {
       setIslemTarihiIso(todayIso());
-      setBankaId('');
+      setBankaId(null);
       setIslemTuru('MUSTERI_EFT');
       setMuhatapId(null);
       setMuhatap('');
@@ -89,6 +89,11 @@ export default function BankaNakitGiris({
 
   const handleSave = () => {
     if (!islemTarihiIso || !bankaId || !islemTuru || !tutar || tutar <= 0) return;
+    const selectedBank = banks.find((b) => b.id === bankaId);
+    if (!selectedBank) {
+      alert('Seçilen banka listede bulunamadı. Lütfen banka listesini yenileyin.');
+      return;
+    }
     if (muhatapRequired && !muhatap) return;
     const today = todayIso();
     if (islemTarihiIso > today) {
@@ -101,7 +106,7 @@ export default function BankaNakitGiris({
       (selected && `${selected.kod} - ${selected.ad}`) ||
       muhatap ||
       '-';
-    const bankaName = banks.find((b) => b.id === bankaId)?.hesapAdi || '-';
+    const bankaName = selectedBank.hesapAdi || '-';
     const baseMessage = [
       'Banka nakit giriş kaydedilsin mi?',
       '',
@@ -153,9 +158,10 @@ export default function BankaNakitGiris({
           <FormRow label="Banka" required>
             <select
               className="input"
-              value={bankaId}
+              value={bankaId ?? ''}
               onChange={(e) => {
-                setBankaId(e.target.value);
+                const value = e.target.value;
+                setBankaId(value || null);
                 setDirty(true);
               }}
             >
