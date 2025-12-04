@@ -125,19 +125,27 @@ export default function AyarlarModal(props: Props) {
         ]);
 
         // Fix Bug 1: Map backend banks - if DB is empty, banks array will be empty (no mock data)
-        const mappedBanks: BankMaster[] = backendBanks.map((bank) => ({
-          id: bank.id,
-          bankaAdi: bank.name,
-          kodu: bank.accountNo ? bank.accountNo.substring(0, 4).toUpperCase() : 'BNK',
-          hesapAdi: bank.name + (bank.accountNo ? ` - ${bank.accountNo}` : ''),
-          iban: bank.iban || undefined,
-          acilisBakiyesi: bank.currentBalance,
-          aktifMi: bank.isActive,
-          // Fix Bug 2: Boolean flags default to false (not stored in backend, preserved in local state only)
-          cekKarnesiVarMi: false,
-          posVarMi: false,
-          krediKartiVarMi: false,
-        }));
+        // Fix Bug 2: Load boolean flags from localStorage (they're not stored in backend)
+        const bankFlagsKey = 'esca-webkasa-bank-flags';
+        const savedFlags = localStorage.getItem(bankFlagsKey);
+        const bankFlags: Record<string, { cekKarnesiVarMi: boolean; posVarMi: boolean; krediKartiVarMi: boolean }> = savedFlags ? JSON.parse(savedFlags) : {};
+        
+        const mappedBanks: BankMaster[] = backendBanks.map((bank) => {
+          const flags = bankFlags[bank.id] || { cekKarnesiVarMi: false, posVarMi: false, krediKartiVarMi: false };
+          return {
+            id: bank.id,
+            bankaAdi: bank.name,
+            kodu: bank.accountNo ? bank.accountNo.substring(0, 4).toUpperCase() : 'BNK',
+            hesapAdi: bank.name + (bank.accountNo ? ` - ${bank.accountNo}` : ''),
+            iban: bank.iban || undefined,
+            acilisBakiyesi: bank.currentBalance,
+            aktifMi: bank.isActive,
+            // Fix Bug 2: Load boolean flags from localStorage
+            cekKarnesiVarMi: flags.cekKarnesiVarMi,
+            posVarMi: flags.posVarMi,
+            krediKartiVarMi: flags.krediKartiVarMi,
+          };
+        });
 
         // Fix Bug 1: Map backend credit cards - if DB is empty, cards array will be empty
         const mappedCreditCards: CreditCard[] = backendCreditCards.map((card) => {
@@ -186,6 +194,23 @@ export default function AyarlarModal(props: Props) {
 
   const handleClose = () => {
     if (dirty && !window.confirm('Kaydedilmemiş bilgiler var. Kapatmak istiyor musunuz?')) return;
+    
+    // Fix Bug 3: Save boolean flags to localStorage before closing
+    const bankFlagsKey = 'esca-webkasa-bank-flags';
+    const bankFlags: Record<string, { cekKarnesiVarMi: boolean; posVarMi: boolean; krediKartiVarMi: boolean }> = {};
+    localBanks.forEach((bank) => {
+      bankFlags[bank.id] = {
+        cekKarnesiVarMi: bank.cekKarnesiVarMi,
+        posVarMi: bank.posVarMi,
+        krediKartiVarMi: bank.krediKartiVarMi,
+      };
+    });
+    localStorage.setItem(bankFlagsKey, JSON.stringify(bankFlags));
+    
+    // Fix Bug 3: Update parent state with latest data before closing
+    setBanks(localBanks);
+    setCreditCards(localCreditCards);
+    
     onClose();
   };
 
@@ -365,7 +390,7 @@ function BankalarTab({ banks, setBanks, onDirty }: { banks: BankMaster[]; setBan
         
         // Add to local state using the real Bank.id from backend
         // Use currentBalance from backend (includes opening balance transaction)
-        setBanks([
+        const newBanks = [
           ...banks,
           {
             id: backendBank.id, // Use real Bank.id from backend, NOT generateId()
@@ -379,7 +404,20 @@ function BankalarTab({ banks, setBanks, onDirty }: { banks: BankMaster[]; setBan
             posVarMi: form.posVarMi,
             krediKartiVarMi: form.krediKartiVarMi,
           },
-        ]);
+        ];
+        setBanks(newBanks);
+        
+        // Fix Bug 4: Save boolean flags to localStorage immediately
+        const bankFlagsKey = 'esca-webkasa-bank-flags';
+        const bankFlags: Record<string, { cekKarnesiVarMi: boolean; posVarMi: boolean; krediKartiVarMi: boolean }> = {};
+        newBanks.forEach((bank) => {
+          bankFlags[bank.id] = {
+            cekKarnesiVarMi: bank.cekKarnesiVarMi,
+            posVarMi: bank.posVarMi,
+            krediKartiVarMi: bank.krediKartiVarMi,
+          };
+        });
+        localStorage.setItem(bankFlagsKey, JSON.stringify(bankFlags));
       }
       setEditingId(null);
       onDirty();

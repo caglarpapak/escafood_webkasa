@@ -56,15 +56,38 @@ interface DashboardProps {
 
 type ActiveView = 'DASHBOARD' | 'KASA_DEFTERI' | 'ISLEM_LOGU' | 'NAKIT_AKIS' | 'CEK_SENET';
 
+/**
+ * Recalculate cash balances from transactions
+ * IMPORTANT: Only transactions with source = KASA affect the main cash balance.
+ * Bank transactions (source = BANKA) do NOT affect the main cash balance.
+ */
 function recalcBalances(transactions: DailyTransaction[]): DailyTransaction[] {
-  const sorted = [...transactions].sort((a, b) => {
+  // Filter to only KASA transactions for cash balance calculation
+  const kasaTransactions = transactions.filter((tx) => tx.source === 'KASA');
+  const sorted = [...kasaTransactions].sort((a, b) => {
     if (a.isoDate === b.isoDate) return a.documentNo.localeCompare(b.documentNo);
     return a.isoDate.localeCompare(b.isoDate);
   });
   let balance = BASE_CASH_BALANCE;
-  return sorted.map((tx) => {
+  const balanceMap = new Map<string, number>();
+  
+  // Calculate balance for each KASA transaction
+  for (const tx of sorted) {
     balance += (tx.incoming || 0) - (tx.outgoing || 0);
-    return { ...tx, balanceAfter: balance };
+    balanceMap.set(tx.id, balance);
+  }
+  
+  // Return all transactions, but only KASA transactions have balanceAfter updated
+  // For non-KASA transactions, show the last KASA balance (they don't affect cash balance)
+  const lastKasaBalance = balanceMap.size > 0 ? Array.from(balanceMap.values())[balanceMap.size - 1] : BASE_CASH_BALANCE;
+  
+  return transactions.map((tx) => {
+    if (tx.source === 'KASA' && balanceMap.has(tx.id)) {
+      return { ...tx, balanceAfter: balanceMap.get(tx.id)! };
+    }
+    // For non-KASA transactions, show the last KASA balance
+    // These transactions don't affect cash balance
+    return { ...tx, balanceAfter: lastKasaBalance };
   });
 }
 
@@ -185,18 +208,27 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         }
         
         // Map backend banks to frontend BankMaster format
-        const mappedBanks: BankMaster[] = backendBanks.map((bank) => ({
-          id: bank.id, // Use the real UUID from database
-          bankaAdi: bank.name,
-          kodu: bank.accountNo ? bank.accountNo.substring(0, 4).toUpperCase() : 'BNK',
-          hesapAdi: bank.name + (bank.accountNo ? ` - ${bank.accountNo}` : ''),
-          iban: bank.iban || undefined,
-          acilisBakiyesi: bank.currentBalance, // Use currentBalance from backend
-          aktifMi: bank.isActive,
-          cekKarnesiVarMi: false, // Default values - these might need to come from backend
-          posVarMi: false,
-          krediKartiVarMi: false,
-        }));
+        // Fix Bug 2: Load boolean flags from localStorage (they're not stored in backend)
+        const bankFlagsKey = 'esca-webkasa-bank-flags';
+        const savedFlags = localStorage.getItem(bankFlagsKey);
+        const bankFlags: Record<string, { cekKarnesiVarMi: boolean; posVarMi: boolean; krediKartiVarMi: boolean }> = savedFlags ? JSON.parse(savedFlags) : {};
+        
+        const mappedBanks: BankMaster[] = backendBanks.map((bank) => {
+          const flags = bankFlags[bank.id] || { cekKarnesiVarMi: false, posVarMi: false, krediKartiVarMi: false };
+          return {
+            id: bank.id, // Use the real UUID from database
+            bankaAdi: bank.name,
+            kodu: bank.accountNo ? bank.accountNo.substring(0, 4).toUpperCase() : 'BNK',
+            hesapAdi: bank.name + (bank.accountNo ? ` - ${bank.accountNo}` : ''),
+            iban: bank.iban || undefined,
+            acilisBakiyesi: bank.currentBalance, // Use currentBalance from backend
+            aktifMi: bank.isActive,
+            // Fix Bug 2: Load boolean flags from localStorage
+            cekKarnesiVarMi: flags.cekKarnesiVarMi,
+            posVarMi: flags.posVarMi,
+            krediKartiVarMi: flags.krediKartiVarMi,
+          };
+        });
         
         console.log('Mapped banks:', mappedBanks);
         setBanks(mappedBanks);
@@ -242,6 +274,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       } catch (error) {
         // eslint-disable-next-line no-console
         console.error('Failed to fetch today\'s transactions:', error);
+        // Ensure empty array on error - no stale data
+        setDailyTransactions([]);
       }
     };
     fetchTodaysTransactions();
@@ -308,8 +342,11 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     [banks, bankDeltasById]
   );
 
+  // Calculate cash balance from only KASA transactions (bank transactions don't affect main cash)
   const cashBalance = useMemo(() => {
-    const sorted = recalcBalances(dailyTransactions);
+    const kasaTransactions = dailyTransactions.filter((tx) => tx.source === 'KASA');
+    if (kasaTransactions.length === 0) return BASE_CASH_BALANCE;
+    const sorted = recalcBalances(kasaTransactions);
     return sorted.length ? sorted[sorted.length - 1].balanceAfter : BASE_CASH_BALANCE;
   }, [dailyTransactions]);
 
@@ -332,60 +369,192 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     setDailyTransactions((prev) => mergeTransactions(prev, newOnes));
   };
 
-  const handleNakitGirisSaved = (values: NakitGirisFormValues) => {
-    const documentNo = getNextBelgeNo('NKT-GRS', values.islemTarihiIso, dailyTransactions);
-    const nowIso = new Date().toISOString();
-    const foundCustomer = values.muhatapId ? customers.find((c) => c.id === values.muhatapId) : undefined;
-    const counterparty =
-      (foundCustomer && `${foundCustomer.kod} - ${foundCustomer.ad}`) || values.muhatap || 'Diğer';
-    const isBankToCash = values.kaynak === 'KASA_TRANSFER_BANKADAN';
-    const tx: DailyTransaction = {
-      id: generateId(),
-      isoDate: values.islemTarihiIso,
-      displayDate: isoToDisplay(values.islemTarihiIso),
-      documentNo,
-      type: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? 'BANKA_KASA_TRANSFER' : 'NAKIT_TAHSILAT',
-      source: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? 'BANKA' : 'KASA',
-      counterparty,
-      description: values.aciklama || '',
-      incoming: values.tutar,
-      outgoing: 0,
-      balanceAfter: 0,
-      bankId: isBankToCash ? values.bankaId : undefined,
-      bankDelta: isBankToCash ? -values.tutar : 0,
-      createdAtIso: nowIso,
-      createdBy: currentUser.email,
-    };
-    addTransactions([tx]);
-    setOpenForm(null);
+  const handleNakitGirisSaved = async (values: NakitGirisFormValues) => {
+    try {
+      const documentNo = getNextBelgeNo('NKT-GRS', values.islemTarihiIso, dailyTransactions);
+      const foundCustomer = values.muhatapId ? customers.find((c) => c.id === values.muhatapId) : undefined;
+      const counterparty =
+        (foundCustomer && `${foundCustomer.kod} - ${foundCustomer.ad}`) || values.muhatap || 'Diğer';
+      const isBankToCash = values.kaynak === 'KASA_TRANSFER_BANKADAN';
+      
+      // Send to backend
+      const response = await apiPost<{
+        id: string;
+        isoDate: string;
+        documentNo: string | null;
+        type: DailyTransactionType;
+        source: DailyTransactionSource;
+        counterparty: string | null;
+        description: string | null;
+        incoming: number;
+        outgoing: number;
+        balanceAfter: number;
+        bankId: string | null;
+        bankDelta: number;
+        createdAt: string;
+        createdBy: string;
+      }>('/api/transactions', {
+        isoDate: values.islemTarihiIso,
+        documentNo,
+        type: isBankToCash ? 'BANKA_KASA_TRANSFER' : 'NAKIT_TAHSILAT',
+        source: isBankToCash ? 'BANKA' : 'KASA',
+        counterparty,
+        description: values.aciklama || null,
+        incoming: values.tutar,
+        outgoing: 0,
+        bankDelta: isBankToCash ? -values.tutar : 0,
+        bankId: isBankToCash && values.bankaId ? values.bankaId : null,
+      });
+
+      // Map backend response to frontend format
+      const tx: DailyTransaction = {
+        id: response.id,
+        isoDate: response.isoDate,
+        displayDate: isoToDisplay(response.isoDate),
+        documentNo: response.documentNo || '',
+        type: response.type,
+        source: response.source,
+        counterparty: response.counterparty || '',
+        description: response.description || '',
+        incoming: response.incoming,
+        outgoing: response.outgoing,
+        balanceAfter: response.balanceAfter,
+        bankId: response.bankId || undefined,
+        bankDelta: response.bankDelta || undefined,
+        createdAtIso: response.createdAt,
+        createdBy: response.createdBy,
+      };
+      addTransactions([tx]);
+      setOpenForm(null);
+      
+      // Refresh today's transactions from backend to ensure we have the latest data
+      const today = todayIso();
+      try {
+        const refreshResponse = await apiGet<{ items: any[]; totalCount: number }>(
+          `/api/transactions?from=${today}&to=${today}&sortKey=isoDate&sortDir=asc`
+        );
+        const refreshed = refreshResponse.items.map((tx) => ({
+          id: tx.id,
+          isoDate: tx.isoDate,
+          displayDate: isoToDisplay(tx.isoDate),
+          documentNo: tx.documentNo || '',
+          type: tx.type,
+          source: tx.source,
+          counterparty: tx.counterparty || '',
+          description: tx.description || '',
+          incoming: tx.incoming,
+          outgoing: tx.outgoing,
+          balanceAfter: tx.balanceAfter,
+          bankId: tx.bankId || undefined,
+          bankDelta: tx.bankDelta || undefined,
+          displayIncoming: tx.displayIncoming || undefined,
+          displayOutgoing: tx.displayOutgoing || undefined,
+          createdAtIso: tx.createdAt,
+          createdBy: tx.createdBy,
+        }));
+        setDailyTransactions(refreshed);
+      } catch (refreshError) {
+        console.error('Failed to refresh transactions:', refreshError);
+        // Continue anyway - the transaction was already added to state
+      }
+    } catch (error) {
+      console.error('Failed to save nakit giris:', error);
+      alert('İşlem kaydedilemedi. Lütfen tekrar deneyin.');
+    }
   };
 
-  const handleNakitCikisSaved = (values: NakitCikisFormValues) => {
-    const documentNo = getNextBelgeNo('NKT-CKS', values.islemTarihiIso, dailyTransactions);
-    const nowIso = new Date().toISOString();
-    const foundSupplier = values.muhatapId ? suppliers.find((s) => s.id === values.muhatapId) : undefined;
-    const counterparty =
-      (foundSupplier && `${foundSupplier.kod} - ${foundSupplier.ad}`) || values.muhatap || 'Diğer';
-    const isCashToBank = values.kaynak === 'KASA_TRANSFER_BANKAYA';
-    const tx: DailyTransaction = {
-      id: generateId(),
-      isoDate: values.islemTarihiIso,
-      displayDate: isoToDisplay(values.islemTarihiIso),
-      documentNo,
-      type: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? 'KASA_BANKA_TRANSFER' : 'NAKIT_ODEME',
-      source: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? 'BANKA' : 'KASA',
-      counterparty,
-      description: values.aciklama || '',
-      incoming: 0,
-      outgoing: values.tutar,
-      balanceAfter: 0,
-      bankId: isCashToBank ? values.bankaId : undefined,
-      bankDelta: isCashToBank ? values.tutar : 0,
-      createdAtIso: nowIso,
-      createdBy: currentUser.email,
-    };
-    addTransactions([tx]);
-    setOpenForm(null);
+  const handleNakitCikisSaved = async (values: NakitCikisFormValues) => {
+    try {
+      const documentNo = getNextBelgeNo('NKT-CKS', values.islemTarihiIso, dailyTransactions);
+      const foundSupplier = values.muhatapId ? suppliers.find((s) => s.id === values.muhatapId) : undefined;
+      const counterparty =
+        (foundSupplier && `${foundSupplier.kod} - ${foundSupplier.ad}`) || values.muhatap || 'Diğer';
+      const isCashToBank = values.kaynak === 'KASA_TRANSFER_BANKAYA';
+      
+      // Send to backend
+      const response = await apiPost<{
+        id: string;
+        isoDate: string;
+        documentNo: string | null;
+        type: DailyTransactionType;
+        source: DailyTransactionSource;
+        counterparty: string | null;
+        description: string | null;
+        incoming: number;
+        outgoing: number;
+        balanceAfter: number;
+        bankId: string | null;
+        bankDelta: number;
+        createdAt: string;
+        createdBy: string;
+      }>('/api/transactions', {
+        isoDate: values.islemTarihiIso,
+        documentNo,
+        type: isCashToBank ? 'KASA_BANKA_TRANSFER' : 'NAKIT_ODEME',
+        source: isCashToBank ? 'BANKA' : 'KASA',
+        counterparty,
+        description: values.aciklama || null,
+        incoming: 0,
+        outgoing: values.tutar, // Fix: Set outgoing = amount for cash out
+        bankDelta: isCashToBank ? values.tutar : 0,
+        bankId: isCashToBank && values.bankaId ? values.bankaId : null,
+      });
+
+      // Map backend response to frontend format
+      const tx: DailyTransaction = {
+        id: response.id,
+        isoDate: response.isoDate,
+        displayDate: isoToDisplay(response.isoDate),
+        documentNo: response.documentNo || '',
+        type: response.type,
+        source: response.source,
+        counterparty: response.counterparty || '',
+        description: response.description || '',
+        incoming: response.incoming,
+        outgoing: response.outgoing, // Fix: Use outgoing from backend
+        balanceAfter: response.balanceAfter,
+        bankId: response.bankId || undefined,
+        bankDelta: response.bankDelta || undefined,
+        createdAtIso: response.createdAt,
+        createdBy: response.createdBy,
+      };
+      addTransactions([tx]);
+      setOpenForm(null);
+      
+      // Refresh today's transactions from backend to ensure we have the latest data
+      const today = todayIso();
+      try {
+        const refreshResponse = await apiGet<{ items: any[]; totalCount: number }>(
+          `/api/transactions?from=${today}&to=${today}&sortKey=isoDate&sortDir=asc`
+        );
+        const refreshed = refreshResponse.items.map((tx) => ({
+          id: tx.id,
+          isoDate: tx.isoDate,
+          displayDate: isoToDisplay(tx.isoDate),
+          documentNo: tx.documentNo || '',
+          type: tx.type,
+          source: tx.source,
+          counterparty: tx.counterparty || '',
+          description: tx.description || '',
+          incoming: tx.incoming,
+          outgoing: tx.outgoing,
+          balanceAfter: tx.balanceAfter,
+          bankId: tx.bankId || undefined,
+          bankDelta: tx.bankDelta || undefined,
+          displayIncoming: tx.displayIncoming || undefined,
+          displayOutgoing: tx.displayOutgoing || undefined,
+          createdAtIso: tx.createdAt,
+          createdBy: tx.createdBy,
+        }));
+        setDailyTransactions(refreshed);
+      } catch (refreshError) {
+        console.error('Failed to refresh transactions:', refreshError);
+        // Continue anyway - the transaction was already added to state
+      }
+    } catch (error) {
+      console.error('Failed to save nakit cikis:', error);
+      alert('İşlem kaydedilemedi. Lütfen tekrar deneyin.');
+    }
   };
 
   const handleBankaNakitGirisSaved = async (values: BankaNakitGirisFormValues) => {
@@ -585,7 +754,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           counterparty: values.muhatap || 'Virman',
           description: values.aciklama || null,
           incoming: 0,
-          outgoing: 0,
+          outgoing: values.tutar, // Fix Bug 8: Set outgoing = amount for bank cash out
           bankDelta: -values.tutar,
           bankId: normalizedBankId,
         });
@@ -1335,15 +1504,30 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                       </tr>
                     )}
                     {todaysTransactions.map((tx) => {
-                      // Fix Bug 4: Get bank name for bank transactions
+                      // Fix Bug 6: Get bank name for bank transactions
                       const bankName = tx.bankId ? banks.find((b) => b.id === tx.bankId)?.bankaAdi : null;
+                      // Fix Bug 6: Get credit card name for credit card transactions
+                      const creditCardName = (tx as any).creditCardId 
+                        ? creditCards.find((c) => c.id === (tx as any).creditCardId)?.kartAdi 
+                        : null;
+                      // Build source label with bank/card info
+                      let sourceLabel = tx.source;
+                      if (tx.source === 'BANKA' && bankName) {
+                        sourceLabel = `${tx.source} (${bankName})`;
+                      }
+                      if (creditCardName) {
+                        sourceLabel = creditCardName;
+                        if (bankName) {
+                          sourceLabel = `${creditCardName} - ${bankName}`;
+                        }
+                      }
                       return (
                       <tr key={tx.id} className="border-b last:border-0">
                         <td className="py-2 px-2">{tx.displayDate}</td>
                         <td className="py-2 px-2">{tx.documentNo}</td>
                         <td className="py-2 px-2">{tx.type}</td>
                         <td className="py-2 px-2">
-                          {tx.source === 'BANKA' && bankName ? `${tx.source} (${bankName})` : tx.source}
+                          {sourceLabel}
                         </td>
                         <td className="py-2 px-2">{tx.counterparty}</td>
                         <td className="py-2 px-2">{tx.description}</td>

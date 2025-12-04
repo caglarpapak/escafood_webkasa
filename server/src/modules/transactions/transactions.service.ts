@@ -10,16 +10,20 @@ import {
 
 /**
  * Calculate cash balance after a transaction
+ * IMPORTANT: Only transactions with source = KASA affect the main cash balance.
+ * Bank transactions (source = BANKA) do NOT affect the main cash balance.
  */
 async function calculateBalanceAfter(
   isoDate: string,
   incoming: number,
   outgoing: number,
+  source: string, // Add source parameter to determine if this affects cash balance
   excludeTransactionId?: string
 ): Promise<number> {
   const where: any = {
     deletedAt: null,
     isoDate: { lte: isoDate },
+    source: 'KASA', // Only include KASA transactions in cash balance calculation
   };
 
   if (excludeTransactionId) {
@@ -39,7 +43,10 @@ async function calculateBalanceAfter(
     balance += Number(tx.incoming) - Number(tx.outgoing);
   }
 
-  balance += incoming - outgoing;
+  // Only add current transaction if it's a KASA transaction
+  if (source === 'KASA') {
+    balance += incoming - outgoing;
+  }
 
   return balance;
 }
@@ -49,9 +56,10 @@ export class TransactionsService {
    * Create a new transaction
    */
   async createTransaction(data: CreateTransactionDto, createdBy: string): Promise<TransactionDto> {
-    const incoming = data.incoming || 0;
-    const outgoing = data.outgoing || 0;
-    const balanceAfter = await calculateBalanceAfter(data.isoDate, incoming, outgoing);
+    // Use ?? instead of || to preserve 0 values (0 is a valid amount)
+    const incoming = data.incoming ?? 0;
+    const outgoing = data.outgoing ?? 0;
+    const balanceAfter = await calculateBalanceAfter(data.isoDate, incoming, outgoing, data.source);
 
     // Data has already been validated by Zod schema, so bankId and creditCardId are either
     // valid UUID strings or null. We just need to ensure they're properly typed.
@@ -177,7 +185,8 @@ export class TransactionsService {
     const incoming = data.incoming !== undefined ? data.incoming : Number(existing.incoming);
     const outgoing = data.outgoing !== undefined ? data.outgoing : Number(existing.outgoing);
     const isoDate = data.isoDate || existing.isoDate;
-    const balanceAfter = await calculateBalanceAfter(isoDate, incoming, outgoing, id);
+    const source = data.source || existing.source;
+    const balanceAfter = await calculateBalanceAfter(isoDate, incoming, outgoing, source, id);
 
     const updated = await prisma.transaction.update({
       where: { id },
