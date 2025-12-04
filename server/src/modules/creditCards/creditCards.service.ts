@@ -154,7 +154,9 @@ export class CreditCardsService {
       ? new Date(card.deletedAt as any)
       : null;
 
-    const limit = card.limit ? Number(card.limit) : null;
+    // FIX: Use consistent pattern - don't treat 0 as falsy
+    // A limit of 0 is a valid value and should not be converted to null
+    const limit = card.limit !== null && card.limit !== undefined ? Number(card.limit) : null;
     const availableLimit = limit !== null ? limit - currentDebt : null;
 
     return {

@@ -470,7 +470,9 @@ export class ChequesService {
 
     // BUG 7 FIX: When cheque goes to ODEMEDE (given to supplier), set supplierId
     // Note: Transaction is already created by frontend (bank cash out), so we don't create another one
-    let supplierIdToSet: string | null = null;
+    // Use explicit control flow instead of nested ternaries for clarity
+    let supplierIdToSet: string | null | undefined = undefined; // undefined = don't update, null = set to null, string = set to value
+    
     if (data.newStatus === 'ODEMEDE' && cheque.direction === 'ALACAK') {
       // Customer cheque given to supplier - validate and set supplierId
       if (data.supplierId) {
@@ -478,24 +480,40 @@ export class ChequesService {
           where: { id: data.supplierId, deletedAt: null },
         });
         if (supplier) {
-          supplierIdToSet = data.supplierId;
+          supplierIdToSet = data.supplierId; // Set to new supplier ID
           // BUG 7 FIX: Don't create transaction here - frontend already created it via bank cash out
           // Transaction is linked via chequeId in the transaction record
           // Just update the cheque status and supplierId (done below)
+        } else {
+          // Supplier not found - keep existing supplierId (don't update)
+          supplierIdToSet = undefined;
         }
+      } else {
+        // No supplierId provided - keep existing supplierId (don't update)
+        supplierIdToSet = undefined;
       }
+    } else {
+      // Not ODEMEDE status or not ALACAK direction - don't update supplierId
+      supplierIdToSet = undefined;
+    }
+    
+    // Build update data - only include supplierId if we want to change it
+    const updateData: any = {
+      status: data.newStatus,
+      bankId: null, // FK kullanmıyoruz
+      updatedBy,
+      updatedAt: new Date(),
+    };
+    
+    // Only include supplierId in update if we explicitly want to change it
+    if (supplierIdToSet !== undefined) {
+      updateData.supplierId = supplierIdToSet;
     }
     
     // Update cheque status and supplierId if applicable
     const updated = await prisma.cheque.update({
       where: { id },
-      data: {
-        status: data.newStatus,
-        supplierId: supplierIdToSet !== null ? supplierIdToSet : (data.newStatus === 'ODEMEDE' && cheque.direction === 'ALACAK' ? cheque.supplierId : undefined), // BUG 7 FIX: Set supplierId when given to supplier
-        bankId: null, // FK kullanmıyoruz
-        updatedBy,
-        updatedAt: new Date(),
-      },
+      data: updateData,
       include: {
         bank: {
           select: {
