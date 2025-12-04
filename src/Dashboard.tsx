@@ -116,10 +116,15 @@ function mergeTransactions(
     (t) => !duplicates.has(`${t.isoDate}|${t.documentNo}|${t.type}|${t.incoming}|${t.outgoing}|${t.counterparty}`)
   );
   // BUG 1 FIX: Don't recalculate - use balanceAfter from backend
-  // Sort by date and documentNo to maintain order
+  // Sort by date, documentNo, and createdAtIso to maintain correct chronological order
+  // This ensures that newly added transactions appear in the correct position
   const merged = [...existing, ...filtered].sort((a, b) => {
-    if (a.isoDate === b.isoDate) return a.documentNo.localeCompare(b.documentNo);
-    return a.isoDate.localeCompare(b.isoDate);
+    if (a.isoDate !== b.isoDate) return a.isoDate.localeCompare(b.isoDate);
+    if (a.documentNo !== b.documentNo) return a.documentNo.localeCompare(b.documentNo);
+    // If same date and documentNo, use createdAtIso to maintain chronological order
+    const aCreated = a.createdAtIso || '';
+    const bCreated = b.createdAtIso || '';
+    return aCreated.localeCompare(bCreated);
   });
   
   // For non-KASA transactions, set balanceAfter to last KASA transaction's balanceAfter
@@ -385,10 +390,15 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     const kasaTransactions = dailyTransactions.filter((tx) => tx.source === 'KASA');
     if (kasaTransactions.length === 0) return BASE_CASH_BALANCE;
     // BUG 1 FIX: Use balanceAfter from backend (already calculated correctly)
-    // Sort by date to get the last transaction
+    // Sort by date, then documentNo, then createdAtIso to get the most recent transaction
+    // This ensures that when a new transaction is added, it's immediately reflected in cashBalance
     const sorted = [...kasaTransactions].sort((a, b) => {
-      if (a.isoDate === b.isoDate) return a.documentNo.localeCompare(b.documentNo);
-      return a.isoDate.localeCompare(b.isoDate);
+      if (a.isoDate !== b.isoDate) return a.isoDate.localeCompare(b.isoDate);
+      if (a.documentNo !== b.documentNo) return a.documentNo.localeCompare(b.documentNo);
+      // If same date and documentNo, use createdAtIso to get the most recent one
+      const aCreated = a.createdAtIso || '';
+      const bCreated = b.createdAtIso || '';
+      return aCreated.localeCompare(bCreated);
     });
     const lastTx = sorted[sorted.length - 1];
     // BUG 1 FIX: Use balanceAfter from backend, not recalculated value
