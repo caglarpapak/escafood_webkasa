@@ -148,6 +148,8 @@ export class ReportsService {
         incoming: Number(tx.incoming),
         outgoing: Number(tx.outgoing),
         balanceAfter: Number(tx.balanceAfter),
+        displayIncoming: tx.displayIncoming ? Number(tx.displayIncoming) : null, // BUG 2 FIX: Include for bank cash in
+        displayOutgoing: tx.displayOutgoing ? Number(tx.displayOutgoing) : null, // BUG 2 FIX: Include for bank cash out
         bankId: tx.bankId,
         bankName: tx.bank?.name || null,
         creditCardId: tx.creditCardId,

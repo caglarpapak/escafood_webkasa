@@ -88,14 +88,20 @@ export class TransactionsService {
       bankDelta = data.incoming ?? 0; // Use incoming as the amount for bank cash in
     } else if (data.type === 'NAKIT_ODEME' && data.source === 'BANKA') {
       // BANK CASH OUT: incoming=0, outgoing=amount, bankDelta=-amount
+      // BUG 3 FIX: Ensure outgoing is positive and bankDelta is negative
       incoming = 0;
       outgoing = data.outgoing ?? 0;
-      bankDelta = -(data.outgoing ?? 0);
+      if (outgoing <= 0) {
+        throw new Error('Bank cash out amount must be greater than 0');
+      }
+      bankDelta = -outgoing; // Always negative for cash out
     } else if (data.type === 'POS_TAHSILAT_BRUT') {
-      // POS COLLECTION: incoming=0, outgoing=0, bankDelta=+netAmount (from displayIncoming)
+      // BUG 5 FIX: POS COLLECTION: incoming=0, outgoing=0, bankDelta=+netAmount
+      // Frontend sends bankDelta as netTutar (brut - commission), use that value
       incoming = 0;
       outgoing = 0;
-      bankDelta = data.displayIncoming ?? 0; // Net amount after commission
+      // Use provided bankDelta (net amount) if set, otherwise fall back to displayIncoming (shouldn't happen)
+      bankDelta = data.bankDelta ?? (data.displayIncoming ?? 0);
     } else if (data.type === 'POS_KOMISYONU') {
       // POS COMMISSION: incoming=0, outgoing=0 (displayOutgoing shows commission), bankDelta=-commissionAmount
       incoming = 0;

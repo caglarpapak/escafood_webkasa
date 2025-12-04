@@ -65,6 +65,7 @@ export interface UpdateChequeStatusDto {
   newStatus: ChequeStatus;
   isoDate: string;
   bankId?: string | null;
+  supplierId?: string | null; // BUG 7 FIX: Supplier ID when cheque is given to supplier
   description?: string | null;
 }
 

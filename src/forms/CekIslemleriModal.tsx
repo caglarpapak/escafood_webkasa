@@ -368,8 +368,8 @@ export default function CekIslemleriModal({
           bankId = cikisTahsilBankasiId;
           break;
         case 'TEDARIKCI_VERILDI':
-          // This is for BORC cheques - update status to ODEMEDE first, then later to TAHSIL_EDILDI when paid
-          // For now, just update to ODEMEDE
+          // BUG 7 FIX: Customer cheque (ALACAK) given to supplier - update status to ODEMEDE
+          // For BORC cheques, this would also be ODEMEDE, but supplierId should be set
           backendStatus = 'ODEMEDE';
           bankId = null;
           break;

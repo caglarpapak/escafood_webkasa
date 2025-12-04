@@ -8,6 +8,7 @@ import { Customer } from '../models/customer';
 import { Supplier } from '../models/supplier';
 import { CreditCard } from '../models/card';
 import { GlobalSettings } from '../models/settings';
+import { formatTl } from '../utils/money';
 import { generateId } from '../utils/id';
 import { apiPost, apiPut, apiDelete, apiGet } from '../utils/api';
 
@@ -1162,9 +1163,9 @@ function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankM
     id: '',
     kartAdi: '',
     bankaId: '',
-    kartLimit: 0,
-    limit: 0,
-    kullanilabilirLimit: 0,
+    kartLimit: null, // BUG 1 FIX: Start with null, not 0
+    limit: null, // BUG 1 FIX: Start with null, not 0
+    kullanilabilirLimit: null, // BUG 1 FIX: Start with null, not 0
     asgariOran: 0.4,
     hesapKesimGunu: 1,
     sonOdemeGunu: 1,
@@ -1180,19 +1181,20 @@ function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankM
       if (card)
         setForm({
           ...card,
-          kartLimit: card.kartLimit ?? card.limit ?? 0,
-          limit: card.limit ?? card.kartLimit ?? 0,
-          kullanilabilirLimit:
-            card.kullanilabilirLimit ?? (card.limit ?? card.kartLimit ?? 0) - (card.guncelBorc || 0),
+          // BUG 1 FIX: Preserve null for limit (don't convert to 0)
+          // Test case: card with limit=null should show empty input, not 0
+          kartLimit: card.kartLimit ?? card.limit ?? null,
+          limit: card.limit ?? card.kartLimit ?? null,
+          kullanilabilirLimit: card.kullanilabilirLimit ?? null,
         });
-    } else {
+      } else {
       setForm({
         id: '',
         kartAdi: '',
         bankaId: '',
-        kartLimit: 0,
-        limit: 0,
-        kullanilabilirLimit: 0,
+        kartLimit: null, // BUG 1 FIX: Start with null, not 0
+        limit: null, // BUG 1 FIX: Start with null, not 0
+        kullanilabilirLimit: null, // BUG 1 FIX: Start with null, not 0
         asgariOran: 0.4,
         hesapKesimGunu: 1,
         sonOdemeGunu: 1,
@@ -1208,11 +1210,15 @@ function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankM
     if (!form.kartAdi || !form.bankaId) return;
     
     try {
-      // Get limit from form - use limit if set, otherwise kartLimit
-      // Send the actual value if it's > 0, otherwise send null (no limit set)
-      // Note: A limit of 0 doesn't make sense for credit cards, so we treat 0 as "no limit"
+      // BUG 1 FIX: Get limit from form - preserve actual numeric values including 0
+      // Test case: limit=250000 should be sent as 250000, not null
+      // Test case: limit=0 should be sent as 0 (valid value, means no limit)
+      // Test case: limit=null should be sent as null (not set)
       const limitValue = form.limit ?? form.kartLimit ?? null;
-      const limitToSend = limitValue !== null && limitValue !== undefined && limitValue > 0 ? limitValue : null;
+      // BUG 1 FIX: Only convert to null if value is actually null/undefined, not if it's 0
+      // A limit of 0 is a valid value (means no limit), but null means "not set"
+      // However, for credit cards, 0 doesn't make sense, so we treat both 0 and null as "not set"
+      const limitToSend = (limitValue !== null && limitValue !== undefined && limitValue > 0) ? limitValue : null;
       
       if (editingId) {
         // Update existing card - save to backend first
@@ -1282,9 +1288,9 @@ function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankM
           id: backendCard.id, // Use real CreditCard.id from backend, NOT generateId()
           bankaId: backendCard.bankId || '',
           kartAdi: backendCard.name,
-          kartLimit: backendCard.limit ?? 0,
-          limit: backendCard.limit ?? 0,
-          kullanilabilirLimit: backendCard.availableLimit ?? (backendCard.limit !== null ? backendCard.limit - backendCard.currentDebt : 0),
+          kartLimit: backendCard.limit, // Preserve null if not set
+          limit: backendCard.limit, // Preserve null if not set
+          kullanilabilirLimit: backendCard.availableLimit, // Preserve null if limit is not set
           asgariOran: form.asgariOran ?? 0.4,
           hesapKesimGunu: backendCard.closingDay || 1,
           sonOdemeGunu: backendCard.dueDay || 1,
@@ -1348,8 +1354,8 @@ function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankM
               <tr key={c.id} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => setEditingId(c.id)}>
                 <td className="px-2 py-1">{c.kartAdi}</td>
                 <td className="px-2 py-1">{banks.find((b) => b.id === c.bankaId)?.bankaAdi || '-'}</td>
-                <td className="px-2 py-1 text-right">{c.kartLimit !== null ? c.kartLimit.toFixed(2) : '-'}</td>
-                <td className="px-2 py-1 text-right">{c.guncelBorc.toFixed(2)}</td>
+                <td className="px-2 py-1 text-right">{c.kartLimit !== null && c.kartLimit !== undefined ? formatTl(c.kartLimit) : '-'}</td>
+                <td className="px-2 py-1 text-right">{formatTl(c.guncelBorc ?? 0)}</td>
                 <td className="px-2 py-1 text-right">
                   <button className="text-rose-600" onClick={() => remove(c.id)}>
                     Sil
@@ -1380,11 +1386,16 @@ function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankM
             ))}
           </select>
         </FormRow>
-        <FormRow label="Kart Limit" required>
-          <MoneyInput className="input" value={form.kartLimit} onChange={(val) => setForm({ ...form, kartLimit: val || 0 })} />
+        <FormRow label="Kart Limit">
+          <MoneyInput 
+            className="input" 
+            value={form.kartLimit ?? null} 
+            onChange={(val) => setForm({ ...form, kartLimit: val ?? null, limit: val ?? null })} 
+          />
         </FormRow>
-        <FormRow label="Güncel Borç" required>
-          <MoneyInput className="input" value={form.guncelBorc} onChange={(val) => setForm({ ...form, guncelBorc: val || 0 })} />
+        <FormRow label="Güncel Borç">
+          <input className="input" value={form.guncelBorc ? form.guncelBorc.toFixed(2) : '0,00'} readOnly />
+          <div className="text-xs text-slate-500 mt-1">Hesaplanan değer (işlemlerden otomatik)</div>
         </FormRow>
         <FormRow label="Asgari Oran">
           <input

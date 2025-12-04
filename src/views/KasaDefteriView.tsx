@@ -168,8 +168,8 @@ export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewPr
           bankName: tx.bankName || undefined, // Fix Bug 5: Use bankName from backend
           creditCardId: tx.creditCardId || undefined, // Fix Bug 5: Include creditCardId
           bankDelta: undefined, // Not provided by backend for Kasa Defteri
-          displayIncoming: undefined,
-          displayOutgoing: undefined,
+          displayIncoming: tx.displayIncoming ?? undefined, // BUG 2 FIX: Use displayIncoming from backend for bank cash in
+          displayOutgoing: tx.displayOutgoing ?? undefined, // BUG 2 FIX: Use displayOutgoing from backend for bank cash out
         }));
 
         setTransactions(mapped);

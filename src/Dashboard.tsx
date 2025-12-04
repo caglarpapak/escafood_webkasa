@@ -71,9 +71,18 @@ function recalcBalances(transactions: DailyTransaction[]): DailyTransaction[] {
   let balance = BASE_CASH_BALANCE;
   const balanceMap = new Map<string, number>();
   
-  // Calculate balance for each KASA transaction
+  // BUG 4 FIX: Calculate balance for each KASA transaction
+  // Use displayIncoming/displayOutgoing if available, otherwise use incoming/outgoing
+  // Test case: Start cash=0, Cash In 1000 → balance 1000, Cash Out 200 → balance 800, Cash Out 300 → balance 500
+  // IMPORTANT: For balance calculation, use actual incoming/outgoing (not display values)
+  // Display values are only for UI display, not for balance calculation
   for (const tx of sorted) {
-    balance += (tx.incoming || 0) - (tx.outgoing || 0);
+    // BUG 4 FIX: Use actual incoming/outgoing for balance calculation (not display values)
+    // Display values are for UI only, balance must use actual transaction amounts
+    const incoming = tx.incoming ?? 0;
+    const outgoing = tx.outgoing ?? 0;
+    // BUG 4 FIX: Ensure correct sign - incoming increases balance, outgoing decreases balance
+    balance += incoming - outgoing;
     balanceMap.set(tx.id, balance);
   }
   
@@ -266,9 +275,9 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           source: tx.source,
           counterparty: tx.counterparty || '',
           description: tx.description || '',
-          incoming: Number(tx.incoming) || 0, // Ensure number type
-          outgoing: Number(tx.outgoing) || 0, // Ensure number type - Fix: Preserve 0 values
-          balanceAfter: Number(tx.balanceAfter) || 0, // Use balanceAfter from backend
+          incoming: Number(tx.incoming) ?? 0, // BUG 4 FIX: Use ?? instead of || to preserve 0
+          outgoing: Number(tx.outgoing) ?? 0, // BUG 4 FIX: Use ?? instead of || to preserve 0
+          balanceAfter: Number(tx.balanceAfter) ?? 0, // BUG 4 FIX: Use balanceAfter from backend (calculated correctly)
           bankId: tx.bankId || undefined,
           bankDelta: tx.bankDelta || undefined,
           displayIncoming: tx.displayIncoming || undefined,
@@ -649,7 +658,9 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
 
           console.log('Sending transaction with bankId:', normalizedBankId, 'for bank:', selectedBank.hesapAdi);
 
-          // Fix: Bank cash in - type: NAKIT_TAHSILAT, source: BANKA, incoming = amount (will be normalized to 0), outgoing = 0, bankDelta = +amount
+          // BUG 2 FIX: Bank cash in - type: NAKIT_TAHSILAT, source: BANKA
+          // Backend normalizes: incoming=0, outgoing=0, bankDelta=+amount
+          // But we need displayIncoming=+amount for UI display
           const response = await apiPost<{
             id: string;
             isoDate: string;
@@ -663,6 +674,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             balanceAfter: number;
             bankId: string | null;
             bankDelta: number;
+            displayIncoming: number | null;
+            displayOutgoing: number | null;
             createdAt: string;
             createdBy: string;
           }>('/api/transactions', {
@@ -675,10 +688,13 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             incoming: values.tutar, // Backend will normalize to 0 for BANK CASH IN
             outgoing: 0,
             bankDelta: values.tutar, // Backend will use this for bankDelta
+            displayIncoming: values.tutar, // BUG 2 FIX: Show amount in UI
+            displayOutgoing: null,
             bankId: normalizedBankId,
           });
 
       // Backend'den gelen transaction'ı frontend formatına çevir
+      // BUG 2 FIX: Include displayIncoming and displayOutgoing for bank transactions
       const tx: DailyTransaction = {
         id: response.id,
         isoDate: response.isoDate,
@@ -693,6 +709,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         balanceAfter: response.balanceAfter,
         bankId: response.bankId || undefined,
         bankDelta: response.bankDelta || undefined,
+        displayIncoming: response.displayIncoming ?? undefined, // BUG 2 FIX: Preserve displayIncoming for bank cash in
+        displayOutgoing: response.displayOutgoing ?? undefined, // BUG 2 FIX: Preserve displayOutgoing for bank cash out
         createdAtIso: response.createdAt,
         createdBy: response.createdBy,
       };
@@ -842,16 +860,19 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         let description = aciklama;
 
 
+        // BUG 7 FIX: Handle cheque payment - get cheque info and supplier
+        let chequeToUpdate: { id: string; supplierId: string | null } | null = null;
         if (values.islemTuru === 'CEK_ODEME' && values.cekId) {
           const cheque = cheques.find((c) => c.id === values.cekId);
           if (cheque) {
             tutar = cheque.tutar;
-            const supplier = cheque.tedarikciId ? suppliers.find((s) => s.id === cheque.tedarikciId) : undefined;
+            // BUG 7 FIX: Use supplierId from form if provided, otherwise from cheque
+            const supplierId = values.supplierId || cheque.tedarikciId || null;
+            const supplier = supplierId ? suppliers.find((s) => s.id === supplierId) : undefined;
             counterparty = supplier ? `${supplier.kod} - ${supplier.ad}` : cheque.lehtar || counterparty;
             description = `Çek No: ${cheque.cekNo}${values.aciklama ? ` – ${values.aciklama}` : ''}`;
-            setCheques((prev) =>
-              prev.map((c) => (c.id === values.cekId ? { ...c, status: 'TAHSIL_EDILDI', kasaMi: false } : c))
-            );
+            // BUG 7 FIX: Store cheque info to update status after transaction is created
+            chequeToUpdate = { id: values.cekId, supplierId };
           }
         }
 
@@ -943,17 +964,23 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         }>('/api/transactions', {
           isoDate: values.islemTarihiIso,
           documentNo,
-          // Fix: Bank cash out - type: NAKIT_ODEME (or CEK_ODENMESI for cheques), source: BANKA, incoming = 0, outgoing = amount, bankDelta = -amount
+          // BUG 2 FIX: Bank cash out - type: NAKIT_ODEME (or CEK_ODENMESI for cheques), source: BANKA
+          // Backend normalizes: incoming=0, outgoing=amount, bankDelta=-amount
+          // But we need displayOutgoing=amount for UI display
           type: values.islemTuru === 'CEK_ODEME' ? 'CEK_ODENMESI' : 'NAKIT_ODEME',
           source: 'BANKA',
           counterparty: counterparty || 'Diğer',
           description: description || null,
           incoming: 0,
-          outgoing: tutar, // Backend will normalize correctly
+          outgoing: tutar, // BUG 3 FIX: Must be > 0 for bank cash out
           bankDelta: -tutar, // Backend will normalize correctly
+          displayIncoming: null, // BUG 2 FIX: No incoming for bank cash out
+          displayOutgoing: tutar, // BUG 2 FIX: Show amount in UI
           bankId: normalizedBankId,
-          supplierId: values.supplierId || null,
-          creditCardId: values.krediKartiId || null, // Include credit card ID for credit card payments
+          // BUG 3 FIX: Normalize supplierId and creditCardId - convert empty strings to null
+          supplierId: (values.supplierId && values.supplierId.trim()) ? values.supplierId.trim() : null,
+          creditCardId: (values.krediKartiId && values.krediKartiId.trim()) ? values.krediKartiId.trim() : null,
+          chequeId: values.cekId && values.cekId.trim() ? values.cekId.trim() : null, // BUG 3 FIX: Include chequeId for cheque payments
         });
 
         // Backend'den gelen transaction'ı frontend formatına çevir
@@ -971,11 +998,42 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           balanceAfter: response.balanceAfter,
           bankId: response.bankId || undefined,
           bankDelta: response.bankDelta || undefined,
+          displayIncoming: response.displayIncoming || undefined, // BUG 2 FIX: Use displayIncoming from backend
+          displayOutgoing: response.displayOutgoing || undefined, // BUG 2 FIX: Use displayOutgoing from backend
           createdAtIso: response.createdAt,
           createdBy: response.createdBy,
         };
 
         addTransactions([tx]);
+        
+        // BUG 7 FIX: Update cheque status to ODEMEDE and set supplierId after transaction is created
+        if (chequeToUpdate) {
+          try {
+            await apiPut<{
+              id: string;
+              status: string;
+              supplierId: string | null;
+            }>(`/api/cheques/${chequeToUpdate.id}/status`, {
+              newStatus: 'ODEMEDE', // BUG 7 FIX: Status should be ODEMEDE when cheque is given to supplier
+              isoDate: values.islemTarihiIso,
+              supplierId: chequeToUpdate.supplierId, // BUG 7 FIX: Set supplierId when cheque is given to supplier
+              description: description || null,
+            });
+            
+            // Update local cheque state
+            setCheques((prev) =>
+              prev.map((c) => 
+                c.id === chequeToUpdate.id 
+                  ? { ...c, status: 'ODEMEDE', kasaMi: false, tedarikciId: chequeToUpdate.supplierId || undefined }
+                  : c
+              )
+            );
+          } catch (chequeError: any) {
+            console.error('Failed to update cheque status:', chequeError);
+            // Don't block the transaction - just log the error
+          }
+        }
+        
         setOpenForm(null);
         return;
       }
@@ -1022,9 +1080,10 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         description: values.aciklama || null,
         incoming: 0,
         outgoing: 0,
-        bankDelta: values.netTutar,
+        bankDelta: values.netTutar, // BUG 5 FIX: Net amount (brut - commission)
         bankId: values.bankaId,
-        displayIncoming: values.brutTutar,
+        displayIncoming: values.brutTutar, // BUG 5 FIX: Brut amount for display
+        displayOutgoing: null, // BUG 5 FIX: Must be null/0 for POS_TAHSILAT_BRUT validation
       });
 
       // Fix: POS commission transaction - outgoing=commissionAmount, bankDelta=-commissionAmount
@@ -1155,6 +1214,53 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       };
 
       addTransactions([tx]);
+      
+      // BUG 6 FIX: Re-fetch credit cards to update currentDebt after expense
+      try {
+        const backendCreditCards = await apiGet<Array<{
+          id: string;
+          name: string;
+          bankId: string | null;
+          limit: number | null;
+          closingDay: number | null;
+          dueDay: number | null;
+          isActive: boolean;
+          currentDebt: number;
+          availableLimit: number | null;
+          lastOperationDate: string | null;
+        }>>('/api/credit-cards');
+        
+        const cardExtrasKey = 'esca-webkasa-card-extras';
+        const savedExtras = localStorage.getItem(cardExtrasKey);
+        const cardExtras: Record<string, { sonEkstreBorcu: number; asgariOran: number; maskeliKartNo: string }> = savedExtras ? JSON.parse(savedExtras) : {};
+        
+        const mappedCreditCards: CreditCard[] = backendCreditCards.map((card) => {
+          const limit = card.limit;
+          const availableLimit = card.availableLimit;
+          const extras = cardExtras[card.id] || { sonEkstreBorcu: 0, asgariOran: 0.4, maskeliKartNo: '' };
+          
+          return {
+            id: card.id,
+            bankaId: card.bankId || '',
+            kartAdi: card.name,
+            kartLimit: limit,
+            limit: limit,
+            kullanilabilirLimit: availableLimit,
+            asgariOran: extras.asgariOran,
+            hesapKesimGunu: card.closingDay ?? 1,
+            sonOdemeGunu: card.dueDay ?? 1,
+            maskeliKartNo: extras.maskeliKartNo,
+            aktifMi: card.isActive,
+            sonEkstreBorcu: extras.sonEkstreBorcu,
+            guncelBorc: card.currentDebt, // BUG 6 FIX: Use updated currentDebt from backend
+          };
+        });
+        
+        setCreditCards(mappedCreditCards);
+      } catch (refreshError) {
+        console.error('Failed to refresh credit cards after expense:', refreshError);
+      }
+      
       setOpenForm(null);
     } catch (error: any) {
       alert(`Hata: ${error.message || 'Kredi kartı harcaması kaydedilemedi'}`);
@@ -1214,6 +1320,53 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       };
 
       addTransactions([tx]);
+      
+      // BUG 6 FIX: Re-fetch credit cards to update currentDebt after expense
+      try {
+        const backendCreditCards = await apiGet<Array<{
+          id: string;
+          name: string;
+          bankId: string | null;
+          limit: number | null;
+          closingDay: number | null;
+          dueDay: number | null;
+          isActive: boolean;
+          currentDebt: number;
+          availableLimit: number | null;
+          lastOperationDate: string | null;
+        }>>('/api/credit-cards');
+        
+        const cardExtrasKey = 'esca-webkasa-card-extras';
+        const savedExtras = localStorage.getItem(cardExtrasKey);
+        const cardExtras: Record<string, { sonEkstreBorcu: number; asgariOran: number; maskeliKartNo: string }> = savedExtras ? JSON.parse(savedExtras) : {};
+        
+        const mappedCreditCards: CreditCard[] = backendCreditCards.map((card) => {
+          const limit = card.limit;
+          const availableLimit = card.availableLimit;
+          const extras = cardExtras[card.id] || { sonEkstreBorcu: 0, asgariOran: 0.4, maskeliKartNo: '' };
+          
+          return {
+            id: card.id,
+            bankaId: card.bankId || '',
+            kartAdi: card.name,
+            kartLimit: limit,
+            limit: limit,
+            kullanilabilirLimit: availableLimit,
+            asgariOran: extras.asgariOran,
+            hesapKesimGunu: card.closingDay ?? 1,
+            sonOdemeGunu: card.dueDay ?? 1,
+            maskeliKartNo: extras.maskeliKartNo,
+            aktifMi: card.isActive,
+            sonEkstreBorcu: extras.sonEkstreBorcu,
+            guncelBorc: card.currentDebt, // BUG 6 FIX: Use updated currentDebt from backend
+          };
+        });
+        
+        setCreditCards(mappedCreditCards);
+      } catch (refreshError) {
+        console.error('Failed to refresh credit cards after expense:', refreshError);
+      }
+      
       setOpenForm(null);
     } catch (error: any) {
       alert(`Hata: ${error.message || 'Kredi kartı masrafı kaydedilemedi'}`);

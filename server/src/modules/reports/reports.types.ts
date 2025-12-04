@@ -26,6 +26,8 @@ export interface KasaDefteriResponse {
     incoming: number;
     outgoing: number;
     balanceAfter: number;
+    displayIncoming: number | null; // BUG 2 FIX: For bank cash in display
+    displayOutgoing: number | null; // BUG 2 FIX: For bank cash out display
     bankId: string | null;
     bankName: string | null;
     creditCardId: string | null;

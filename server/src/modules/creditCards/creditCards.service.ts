@@ -86,7 +86,9 @@ export class CreditCardsService {
       const lastOperationDate =
         card.operations.length > 0 ? card.operations[0].isoDate : null;
 
-      const limit = card.limit ? Number(card.limit) : null;
+      // BUG 1 FIX: Preserve null limit correctly - don't convert 0 to null (though 0 is invalid for credit cards)
+      // Test case: limit=250000 should return 250000
+      const limit = card.limit !== null && card.limit !== undefined ? Number(card.limit) : null;
       const availableLimit = limit !== null ? limit - currentDebt : null;
 
       return {
@@ -221,7 +223,9 @@ export class CreditCardsService {
       },
     });
 
-    const limit = card.limit ? Number(card.limit) : null;
+    // BUG 1 FIX: Preserve null limit correctly for new cards
+    // Test case: limit=250000 should return 250000
+    const limit = card.limit !== null && card.limit !== undefined ? Number(card.limit) : null;
     const currentDebt = 0; // New card has no operations yet
     const availableLimit = limit !== null ? limit - currentDebt : null;
 
@@ -266,11 +270,14 @@ export class CreditCardsService {
       throw new Error('Cannot update deleted credit card');
     }
 
+    // BUG 1 FIX: Handle limit update correctly - if limit is explicitly null, set it to null
+    // Test case: limit=250000 should be saved as 250000
+    // Test case: limit=null should clear the limit (set to null in DB)
     const updated = await prisma.creditCard.update({
       where: { id },
       data: {
         ...data,
-        limit: data.limit !== undefined ? data.limit : card.limit,
+        limit: data.limit !== undefined ? data.limit : card.limit, // Preserve existing if not provided, otherwise use new value (including null)
         updatedBy,
         updatedAt: new Date(),
       },
@@ -300,7 +307,10 @@ export class CreditCardsService {
     const lastOperationDate =
       updated.operations.length > 0 ? updated.operations[0].isoDate : null;
 
-    const limit = updated.limit ? Number(updated.limit) : null;
+    // BUG 1 FIX: Preserve null limit correctly - don't convert 0 to null
+    // Test case: limit=250000 should return 250000
+    // Test case: limit=null should return null
+    const limit = updated.limit !== null && updated.limit !== undefined ? Number(updated.limit) : null;
     const availableLimit = limit !== null ? limit - currentDebt : null;
 
     return {

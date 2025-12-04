@@ -20,14 +20,20 @@ export default function KrediKartiIzlemeModal({ isOpen, onClose, creditCards, ba
       .map((card) => {
         const bank = banks.find((b) => b.id === card.bankaId);
         const { daysLeft, dueDisplay } = getCreditCardNextDue(card);
-        // Fix Bug 6: Use limit from card (from backend, correctly calculated)
+        // BUG 1 FIX: Use limit from card (from backend, correctly calculated)
         // card.limit is the primary field, kartLimit is fallback
         // Preserve null if limit is not set (don't convert to 0)
+        // Test case: card with limit=250000 should show 250.000,00 TL
         const limit = card.limit !== null && card.limit !== undefined ? card.limit : (card.kartLimit ?? null);
-        // Use guncelBorc from card (should be from backend, calculated from operations)
-        const guncelBorc = card.guncelBorc || 0;
-        // Fix Bug 6: Calculate available limit: limit - currentDebt (NOT currentDebt - limit)
+        
+        // BUG 1 FIX: Use guncelBorc from card (from backend currentDebt, calculated from operations)
+        // Test case: card with currentDebt=25000 should show 25.000,00 TL
+        // If guncelBorc is 0, it's a valid value (card has no debt), so use ?? instead of ||
+        const guncelBorc = card.guncelBorc ?? 0;
+        
+        // BUG 1 FIX: Calculate available limit: limit - currentDebt (NOT currentDebt - limit)
         // If limit is null, availableLimit should also be null
+        // Test case: limit=250000, currentDebt=25000 → available=225000
         const available = limit !== null ? limit - guncelBorc : null;
         return {
           card,

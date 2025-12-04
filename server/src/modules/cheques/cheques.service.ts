@@ -468,12 +468,30 @@ export class ChequesService {
       );
     }
 
-    // Update cheque status
-    // TODO: bankId FK kullanmıyoruz, şimdilik null tutuyoruz
+    // BUG 7 FIX: When cheque goes to ODEMEDE (given to supplier), set supplierId
+    // Note: Transaction is already created by frontend (bank cash out), so we don't create another one
+    let supplierIdToSet: string | null = null;
+    if (data.newStatus === 'ODEMEDE' && cheque.direction === 'ALACAK') {
+      // Customer cheque given to supplier - validate and set supplierId
+      if (data.supplierId) {
+        const supplier = await prisma.supplier.findUnique({
+          where: { id: data.supplierId, deletedAt: null },
+        });
+        if (supplier) {
+          supplierIdToSet = data.supplierId;
+          // BUG 7 FIX: Don't create transaction here - frontend already created it via bank cash out
+          // Transaction is linked via chequeId in the transaction record
+          // Just update the cheque status and supplierId (done below)
+        }
+      }
+    }
+    
+    // Update cheque status and supplierId if applicable
     const updated = await prisma.cheque.update({
       where: { id },
       data: {
         status: data.newStatus,
+        supplierId: supplierIdToSet !== null ? supplierIdToSet : (data.newStatus === 'ODEMEDE' && cheque.direction === 'ALACAK' ? cheque.supplierId : undefined), // BUG 7 FIX: Set supplierId when given to supplier
         bankId: null, // FK kullanmıyoruz
         updatedBy,
         updatedAt: new Date(),

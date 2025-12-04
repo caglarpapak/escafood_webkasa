@@ -32,6 +32,7 @@ export const updateChequeStatusSchema = z.object({
   newStatus: z.nativeEnum(ChequeStatus),
   isoDate: z.string().regex(isoDateRegex, 'Geçerli bir tarih formatı gerekir (YYYY-MM-DD)'),
   bankId: z.string().uuid().nullable().optional(),
+  supplierId: z.string().uuid().nullable().optional(), // BUG 7 FIX: Allow supplierId when cheque is given to supplier
   description: z.string().max(500).nullable().optional(),
 });
 
