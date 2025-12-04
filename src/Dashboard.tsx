@@ -14,7 +14,7 @@ import { formatTl } from './utils/money';
 import { getNextBelgeNo } from './utils/documentNo';
 import { generateId } from './utils/id';
 import { getCreditCardNextDue } from './utils/creditCard';
-import { apiGet, apiPost } from './utils/api';
+import { apiGet, apiPost, apiDelete } from './utils/api';
 import NakitGiris, { NakitGirisFormValues } from './forms/NakitGiris';
 import NakitCikis, { NakitCikisFormValues } from './forms/NakitCikis';
 import BankaNakitGiris, { BankaNakitGirisFormValues } from './forms/BankaNakitGiris';
@@ -1412,11 +1412,15 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     setOpenForm(null);
   };
 
-  const removeTransaction = (id: string) => {
+  const removeTransaction = async (id: string) => {
     if (!window.confirm('Bu satırı silmek istediğinize emin misiniz?')) return;
-    // BUG 1 FIX: After deleting a transaction, re-fetch from backend to get correct balanceAfter values
+    // BUG 1 FIX: Delete transaction from backend, then re-fetch to get correct balanceAfter values
     // Don't use recalcBalances which uses BASE_CASH_BALANCE and causes inconsistency
     try {
+      // Delete from backend first
+      await apiDelete(`/api/transactions/${id}`);
+      
+      // Then re-fetch today's transactions to get correct balanceAfter values
       const today = todayIso();
       const response = await apiGet<{ items: any[]; totalCount: number }>(
         `/api/transactions?from=${today}&to=${today}&sortKey=isoDate&sortDir=asc`
