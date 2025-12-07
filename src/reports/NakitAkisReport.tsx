@@ -110,45 +110,50 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
   };
 
   // Use backend data if available, otherwise fallback to client-side calculation
-  const totals = reportData
-    ? {
+  // FIX: useMemo must always be called (React hooks rule), but we can use reportData inside it
+  const totals = useMemo(() => {
+    // If we have backend data, use it
+    if (reportData) {
+      return {
         totalIn: reportData.totalIn,
         totalOut: reportData.totalOut,
+      };
+    }
+    
+    // Otherwise, calculate from client-side transactions
+    const filtered = safeTransactions.filter((tx) => {
+      if (!fromDate || !toDate) return false;
+      if (tx.isoDate < fromDate || tx.isoDate > toDate) return false;
+      if (userFilter !== 'HEPSI') {
+        if (!tx.createdBy || tx.createdBy !== userFilter) return false;
       }
-    : useMemo(() => {
-        const filtered = safeTransactions.filter((tx) => {
-          if (!fromDate || !toDate) return false;
-          if (tx.isoDate < fromDate || tx.isoDate > toDate) return false;
-          if (userFilter !== 'HEPSI') {
-            if (!tx.createdBy || tx.createdBy !== userFilter) return false;
-          }
-          if (scope === 'NAKIT') {
-            const cashMovement = (tx.incoming || 0) !== 0 || (tx.outgoing || 0) !== 0;
-            const bankMovement = !!tx.bankDelta && tx.bankDelta !== 0;
-            if (!cashMovement || bankMovement) return false;
-          } else if (scope === 'BANKA') {
-            if (!tx.bankDelta || tx.bankDelta === 0) return false;
-          }
-          const term = searchText.trim().toLowerCase();
-          if (term) {
-            const combined = `${getTransactionTypeLabel(tx.type)} ${getTransactionSourceLabel(tx.source)} ${tx.counterparty || ''} ${
-              tx.description || ''
-            }`.toLowerCase();
-            if (!combined.includes(term)) return false;
-          }
-          return true;
-        });
-        return filtered.reduce(
-          (acc, tx) => {
-            const incoming = resolveIncomingAmount(tx);
-            const outgoing = resolveOutgoingAmount(tx);
-            acc.totalIn += incoming;
-            acc.totalOut += outgoing;
-            return acc;
-          },
-          { totalIn: 0, totalOut: 0 }
-        );
-      }, [fromDate, scope, searchText, toDate, safeTransactions, userFilter]);
+      if (scope === 'NAKIT') {
+        const cashMovement = (tx.incoming || 0) !== 0 || (tx.outgoing || 0) !== 0;
+        const bankMovement = !!tx.bankDelta && tx.bankDelta !== 0;
+        if (!cashMovement || bankMovement) return false;
+      } else if (scope === 'BANKA') {
+        if (!tx.bankDelta || tx.bankDelta === 0) return false;
+      }
+      const term = searchText.trim().toLowerCase();
+      if (term) {
+        const combined = `${getTransactionTypeLabel(tx.type)} ${getTransactionSourceLabel(tx.source)} ${tx.counterparty || ''} ${
+          tx.description || ''
+        }`.toLowerCase();
+        if (!combined.includes(term)) return false;
+      }
+      return true;
+    });
+    return filtered.reduce(
+      (acc, tx) => {
+        const incoming = resolveIncomingAmount(tx);
+        const outgoing = resolveOutgoingAmount(tx);
+        acc.totalIn += incoming;
+        acc.totalOut += outgoing;
+        return acc;
+      },
+      { totalIn: 0, totalOut: 0 }
+    );
+  }, [reportData, fromDate, scope, searchText, toDate, safeTransactions, userFilter]);
 
   const net = totals.totalIn - totals.totalOut;
   const girisler = reportData?.girisler || [];
