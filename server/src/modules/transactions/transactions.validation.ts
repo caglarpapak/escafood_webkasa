@@ -109,12 +109,13 @@ export const createTransactionSchema = z
   })
   .refine(
     (data) => {
-      // POS_KOMISYONU: displayOutgoing > 0, outgoing = 0, bankDelta = 0
+      // POS_KOMISYONU: displayOutgoing > 0, outgoing = 0, bankDelta < 0 (negative commission reduces bank balance)
+      // BUG 3 FIX: bankDelta should be negative (commission reduces bank balance), not 0
       if (data.type === 'POS_KOMISYONU') {
         return (
           (data.displayOutgoing ?? 0) > 0 &&
           data.outgoing === 0 &&
-          data.bankDelta === 0 &&
+          (data.bankDelta ?? 0) < 0 && // Commission reduces bank balance (negative)
           (data.displayIncoming ?? 0) === 0
         );
       }
@@ -122,7 +123,7 @@ export const createTransactionSchema = z
     },
     {
       message:
-        'POS_KOMISYONU must have displayOutgoing > 0, outgoing = 0, bankDelta = 0, and displayIncoming = 0',
+        'POS_KOMISYONU must have displayOutgoing > 0, outgoing = 0, bankDelta < 0 (negative), and displayIncoming = 0',
     }
   )
   .refine(

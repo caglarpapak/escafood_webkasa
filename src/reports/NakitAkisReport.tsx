@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import {
   DailyTransaction,
   getTransactionSourceLabel,
@@ -9,6 +9,7 @@ import { isoToDisplay, todayIso } from '../utils/date';
 import { formatTl } from '../utils/money';
 import { HomepageIcon } from '../components/HomepageIcon';
 import { printReport } from '../utils/pdfExport';
+import { apiGet } from '../utils/api';
 
 interface Props {
   transactions: DailyTransaction[];
@@ -34,9 +35,62 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
   const [scope, setScope] = useState<Scope>('HEPSI');
   const [userFilter, setUserFilter] = useState<string>('HEPSI');
   const [searchText, setSearchText] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [reportData, setReportData] = useState<{
+    totalIn: number;
+    totalOut: number;
+    net: number;
+    bankInTotal: number;
+    bankOutTotal: number;
+    bankNet: number;
+    cashInTotal: number;
+    cashOutTotal: number;
+    cashNet: number;
+    girisler: any[];
+    cikislar: any[];
+  } | null>(null);
 
   // Safeguard: ensure transactions is always an array
   const safeTransactions = transactions ?? [];
+
+  // Fetch report data from backend when filters change
+  useEffect(() => {
+    const fetchReportData = async () => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams();
+        if (fromDate) params.append('from', fromDate);
+        if (toDate) params.append('to', toDate);
+        if (scope !== 'HEPSI') params.append('scope', scope);
+        if (userFilter !== 'HEPSI') params.append('user', userFilter);
+        if (searchText.trim()) params.append('search', searchText.trim());
+
+        const response = await apiGet<{
+          totalIn: number;
+          totalOut: number;
+          net: number;
+          bankInTotal: number;
+          bankOutTotal: number;
+          bankNet: number;
+          cashInTotal: number;
+          cashOutTotal: number;
+          cashNet: number;
+          girisler: any[];
+          cikislar: any[];
+        }>(`/api/reports/nakit-akis?${params.toString()}`);
+
+        setReportData(response);
+      } catch (error) {
+        console.error('Failed to fetch nakit akis report:', error);
+        // Fallback to client-side calculation if backend fails
+        setReportData(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchReportData();
+  }, [fromDate, toDate, scope, userFilter, searchText]);
 
   const distinctUsers = useMemo(() => {
     return Array.from(new Set(safeTransactions.map((t) => t.createdBy).filter(Boolean))) as string[];
@@ -55,59 +109,358 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
     return Math.max(tx.displayOutgoing || 0, tx.outgoing || 0, bankDelta < 0 ? Math.abs(bankDelta) : 0);
   };
 
-  const filtered = useMemo(() => {
-    const term = searchText.trim().toLowerCase();
-    return safeTransactions.filter((tx) => {
-      if (!fromDate || !toDate) return false;
-      if (tx.isoDate < fromDate || tx.isoDate > toDate) return false;
-
-      if (userFilter !== 'HEPSI') {
-        if (!tx.createdBy || tx.createdBy !== userFilter) return false;
+  // Use backend data if available, otherwise fallback to client-side calculation
+  const totals = reportData
+    ? {
+        totalIn: reportData.totalIn,
+        totalOut: reportData.totalOut,
       }
-
-      if (scope === 'NAKIT') {
-        const cashMovement = (tx.incoming || 0) !== 0 || (tx.outgoing || 0) !== 0;
-        const bankMovement = !!tx.bankDelta && tx.bankDelta !== 0;
-        if (!cashMovement || bankMovement) return false;
-      } else if (scope === 'BANKA') {
-        if (!tx.bankDelta || tx.bankDelta === 0) return false;
-      }
-
-      if (term) {
-        const combined = `${getTransactionTypeLabel(tx.type)} ${getTransactionSourceLabel(tx.source)} ${tx.counterparty || ''} ${
-          tx.description || ''
-        }`.toLowerCase();
-        if (!combined.includes(term)) return false;
-      }
-      return true;
-    });
-  }, [fromDate, scope, searchText, toDate, safeTransactions, userFilter]);
-
-  const totals = useMemo(() => {
-    return filtered.reduce(
-      (acc, tx) => {
-        const incoming = resolveIncomingAmount(tx);
-        const outgoing = resolveOutgoingAmount(tx);
-        // POS komisyonları kasa/banka bakiyesine dokunmadan raporda gider olarak gösterilir.
-        acc.totalIn += incoming;
-        acc.totalOut += outgoing;
-        return acc;
-      },
-      { totalIn: 0, totalOut: 0 }
-    );
-  }, [filtered]);
+    : useMemo(() => {
+        const filtered = safeTransactions.filter((tx) => {
+          if (!fromDate || !toDate) return false;
+          if (tx.isoDate < fromDate || tx.isoDate > toDate) return false;
+          if (userFilter !== 'HEPSI') {
+            if (!tx.createdBy || tx.createdBy !== userFilter) return false;
+          }
+          if (scope === 'NAKIT') {
+            const cashMovement = (tx.incoming || 0) !== 0 || (tx.outgoing || 0) !== 0;
+            const bankMovement = !!tx.bankDelta && tx.bankDelta !== 0;
+            if (!cashMovement || bankMovement) return false;
+          } else if (scope === 'BANKA') {
+            if (!tx.bankDelta || tx.bankDelta === 0) return false;
+          }
+          const term = searchText.trim().toLowerCase();
+          if (term) {
+            const combined = `${getTransactionTypeLabel(tx.type)} ${getTransactionSourceLabel(tx.source)} ${tx.counterparty || ''} ${
+              tx.description || ''
+            }`.toLowerCase();
+            if (!combined.includes(term)) return false;
+          }
+          return true;
+        });
+        return filtered.reduce(
+          (acc, tx) => {
+            const incoming = resolveIncomingAmount(tx);
+            const outgoing = resolveOutgoingAmount(tx);
+            acc.totalIn += incoming;
+            acc.totalOut += outgoing;
+            return acc;
+          },
+          { totalIn: 0, totalOut: 0 }
+        );
+      }, [fromDate, scope, searchText, toDate, safeTransactions, userFilter]);
 
   const net = totals.totalIn - totals.totalOut;
-
-  const girisler = useMemo(() => {
-    return filtered.filter((tx) => resolveIncomingAmount(tx) > 0);
-  }, [filtered]);
-
-  const cikislar = useMemo(() => {
-    return filtered.filter((tx) => resolveOutgoingAmount(tx) > 0);
-  }, [filtered]);
+  const girisler = reportData?.girisler || [];
+  const cikislar = reportData?.cikislar || [];
 
   const resolveBankName = (bankId?: string) => banks.find((b) => b.id === bankId)?.bankaAdi || 'Banka';
+
+  const getScopeLabel = (s: Scope) => {
+    switch (s) {
+      case 'HEPSI':
+        return 'Hepsi';
+      case 'NAKIT':
+        return 'Sadece Nakit';
+      case 'BANKA':
+        return 'Sadece Banka';
+      default:
+        return 'Hepsi';
+    }
+  };
+
+  const getUserLabel = (u: string) => {
+    return u === 'HEPSI' ? 'Hepsi' : u;
+  };
+
+  const generateNakitAkisPDF = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Pop-up engelleyici nedeniyle yazdırma penceresi açılamadı. Lütfen pop-up engelleyiciyi devre dışı bırakın.');
+      return;
+    }
+
+    const printHtml = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Nakit Akış Raporu</title>
+          <style>
+            @media print {
+              @page {
+                size: A4;
+                margin: 1.5cm;
+              }
+              body {
+                margin: 0;
+                padding: 0;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                font-size: 11px;
+                color: #000;
+              }
+              .no-print {
+                display: none !important;
+              }
+              table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 8px 0;
+                page-break-inside: auto;
+              }
+              th, td {
+                border: 1px solid #ddd;
+                padding: 5px;
+                text-align: left;
+              }
+              th {
+                background-color: #f5f5f5;
+                font-weight: bold;
+              }
+              .summary-box {
+                border: 1px solid #ddd;
+                padding: 8px;
+                margin: 5px;
+                page-break-inside: avoid;
+                display: inline-block;
+                width: calc(33.333% - 10px);
+                vertical-align: top;
+              }
+              .summary-group {
+                margin: 10px 0;
+                page-break-inside: avoid;
+              }
+              h1, h2, h3 {
+                page-break-after: avoid;
+              }
+              tr {
+                page-break-inside: avoid;
+              }
+              thead {
+                display: table-header-group;
+              }
+            }
+            body {
+              margin: 0;
+              padding: 20px;
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+              font-size: 11px;
+              color: #000;
+            }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 20px;
+              border-bottom: 2px solid #333;
+              padding-bottom: 10px;
+            }
+            .header img {
+              height: 50px;
+            }
+            .title-section {
+              text-align: center;
+              margin: 15px 0;
+            }
+            .title-section h1 {
+              font-size: 20px;
+              font-weight: bold;
+              margin: 5px 0;
+            }
+            .title-section .meta {
+              font-size: 10px;
+              color: #666;
+              margin: 3px 0;
+            }
+            .summary-box {
+              border: 1px solid #ddd;
+              padding: 8px;
+              margin: 5px;
+              display: inline-block;
+              width: calc(33.333% - 10px);
+              vertical-align: top;
+              box-sizing: border-box;
+            }
+            .summary-box .label {
+              font-size: 9px;
+              color: #666;
+              margin-bottom: 3px;
+            }
+            .summary-box .value {
+              font-size: 14px;
+              font-weight: bold;
+            }
+            .summary-group-title {
+              font-size: 10px;
+              font-weight: bold;
+              color: #333;
+              margin: 10px 0 5px 0;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 10px 0;
+            }
+            th, td {
+              border: 1px solid #ddd;
+              padding: 5px;
+              text-align: left;
+            }
+            th {
+              background-color: #f5f5f5;
+              font-weight: bold;
+            }
+            .text-right {
+              text-align: right;
+            }
+            .text-emerald {
+              color: #059669;
+            }
+            .text-rose {
+              color: #e11d48;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <img src="https://esca-food.com/image/cache/catalog/esca%20food%20logosu%20tek_-700x800.png" alt="Esca Food" />
+            <img src="https://esca-food.com/image/cache/catalog/web%20kasa%20logosu%20tek_-700x800.png" alt="Web Kasa" />
+          </div>
+          <div class="title-section">
+            <h1>Nakit Akış Raporu</h1>
+            <div class="meta">Dönem: ${isoToDisplay(fromDate)} – ${isoToDisplay(toDate)}</div>
+            <div class="meta">Kapsam: ${getScopeLabel(scope)}</div>
+            <div class="meta">Kullanıcı: ${getUserLabel(userFilter)}</div>
+          </div>
+          
+          <div class="summary-group">
+            <div class="summary-group-title">Genel Toplamlar</div>
+            <div class="summary-box">
+              <div class="label">Toplam Giriş</div>
+              <div class="value text-emerald">${formatTl(totals.totalIn)}</div>
+            </div>
+            <div class="summary-box">
+              <div class="label">Toplam Çıkış</div>
+              <div class="value text-rose">${formatTl(totals.totalOut)}</div>
+            </div>
+            <div class="summary-box">
+              <div class="label">Net</div>
+              <div class="value">${formatTl(net)}</div>
+            </div>
+          </div>
+
+          <div class="summary-group">
+            <div class="summary-group-title">Banka Hareketleri</div>
+            <div class="summary-box">
+              <div class="label">Banka Toplam Giriş</div>
+              <div class="value text-emerald">${formatTl(reportData?.bankInTotal || 0)}</div>
+            </div>
+            <div class="summary-box">
+              <div class="label">Banka Toplam Çıkış</div>
+              <div class="value text-rose">${formatTl(reportData?.bankOutTotal || 0)}</div>
+            </div>
+            <div class="summary-box">
+              <div class="label">Banka Net</div>
+              <div class="value">${formatTl(reportData?.bankNet || 0)}</div>
+            </div>
+          </div>
+
+          <div class="summary-group">
+            <div class="summary-group-title">Nakit Hareketleri</div>
+            <div class="summary-box">
+              <div class="label">Nakit Toplam Giriş</div>
+              <div class="value text-emerald">${formatTl(reportData?.cashInTotal || 0)}</div>
+            </div>
+            <div class="summary-box">
+              <div class="label">Nakit Toplam Çıkış</div>
+              <div class="value text-rose">${formatTl(reportData?.cashOutTotal || 0)}</div>
+            </div>
+            <div class="summary-box">
+              <div class="label">Nakit Net</div>
+              <div class="value">${formatTl(reportData?.cashNet || 0)}</div>
+            </div>
+          </div>
+
+          <div style="margin-top: 20px;">
+            <div style="font-weight: bold; margin-bottom: 10px;">Girişler</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Tarih</th>
+                  <th>Tür</th>
+                  <th>Kaynak</th>
+                  <th>Muhatap</th>
+                  <th>Açıklama</th>
+                  <th class="text-right">Tutar</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${girisler.length === 0
+                  ? '<tr><td colspan="6" style="text-align: center; color: #666;">Kayıt yok.</td></tr>'
+                  : girisler
+                      .map(
+                        (giris: any) => `
+                  <tr>
+                    <td>${isoToDisplay(giris.isoDate)}</td>
+                    <td>${getTransactionTypeLabel(giris.type)}</td>
+                    <td>${giris.bankName || giris.creditCardName || getTransactionSourceLabel(giris.source)}</td>
+                    <td>${giris.counterparty || ''}</td>
+                    <td>${giris.description || ''}</td>
+                    <td class="text-right text-emerald">${formatTl(giris.amount)}</td>
+                  </tr>
+                `
+                      )
+                      .join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="margin-top: 20px;">
+            <div style="font-weight: bold; margin-bottom: 10px;">Çıkışlar</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Tarih</th>
+                  <th>Tür</th>
+                  <th>Kaynak</th>
+                  <th>Muhatap</th>
+                  <th>Açıklama</th>
+                  <th class="text-right">Tutar</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${cikislar.length === 0
+                  ? '<tr><td colspan="6" style="text-align: center; color: #666;">Kayıt yok.</td></tr>'
+                  : cikislar
+                      .map(
+                        (cikis: any) => `
+                  <tr>
+                    <td>${isoToDisplay(cikis.isoDate)}</td>
+                    <td>${getTransactionTypeLabel(cikis.type)}</td>
+                    <td>${cikis.bankName || cikis.creditCardName || getTransactionSourceLabel(cikis.source)}</td>
+                    <td>${cikis.counterparty || ''}</td>
+                    <td>${cikis.description || ''}</td>
+                    <td class="text-right text-rose">${formatTl(cikis.amount)}</td>
+                  </tr>
+                `
+                      )
+                      .join('')}
+              </tbody>
+            </table>
+          </div>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(printHtml);
+    printWindow.document.close();
+
+    printWindow.onload = () => {
+      setTimeout(() => {
+        printWindow.print();
+      }, 250);
+    };
+  };
 
   return (
     <div className="space-y-4">
@@ -124,7 +477,7 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
             </button>
             <button
               className="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-sm font-medium"
-              onClick={() => printReport()}
+              onClick={() => generateNakitAkisPDF()}
             >
               📄 PDF / Döküm Al
             </button>
@@ -182,18 +535,75 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
         </div>
       </div>
 
+      {/* Main Summary Boxes */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="card p-3 text-sm">
           <div className="text-slate-500">Toplam Giriş</div>
-          <div className="text-lg font-semibold text-emerald-700">{formatTl(totals.totalIn)}</div>
+          <div className="text-lg font-semibold text-emerald-700">
+            {loading ? '...' : formatTl(totals.totalIn)}
+          </div>
         </div>
         <div className="card p-3 text-sm">
           <div className="text-slate-500">Toplam Çıkış</div>
-          <div className="text-lg font-semibold text-rose-700">{formatTl(totals.totalOut)}</div>
+          <div className="text-lg font-semibold text-rose-700">
+            {loading ? '...' : formatTl(totals.totalOut)}
+          </div>
         </div>
         <div className="card p-3 text-sm">
           <div className="text-slate-500">Net</div>
-          <div className="text-lg font-semibold text-slate-800">{formatTl(net)}</div>
+          <div className="text-lg font-semibold text-slate-800">
+            {loading ? '...' : formatTl(net)}
+          </div>
+        </div>
+      </div>
+
+      {/* Bank Movement Summary Boxes */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="card p-3 text-sm border-l-4 border-l-blue-500">
+          <div className="text-slate-500 text-xs">Banka Hareketleri</div>
+          <div className="text-xs text-slate-400 mb-1">Banka Toplam Giriş</div>
+          <div className="text-base font-semibold text-emerald-700">
+            {loading ? '...' : formatTl(reportData?.bankInTotal || 0)}
+          </div>
+        </div>
+        <div className="card p-3 text-sm border-l-4 border-l-blue-500">
+          <div className="text-slate-500 text-xs opacity-0">Banka Hareketleri</div>
+          <div className="text-xs text-slate-400 mb-1">Banka Toplam Çıkış</div>
+          <div className="text-base font-semibold text-rose-700">
+            {loading ? '...' : formatTl(reportData?.bankOutTotal || 0)}
+          </div>
+        </div>
+        <div className="card p-3 text-sm border-l-4 border-l-blue-500">
+          <div className="text-slate-500 text-xs opacity-0">Banka Hareketleri</div>
+          <div className="text-xs text-slate-400 mb-1">Banka Net</div>
+          <div className="text-base font-semibold text-slate-800">
+            {loading ? '...' : formatTl(reportData?.bankNet || 0)}
+          </div>
+        </div>
+      </div>
+
+      {/* Cash Movement Summary Boxes */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="card p-3 text-sm border-l-4 border-l-green-500">
+          <div className="text-slate-500 text-xs">Nakit Hareketleri</div>
+          <div className="text-xs text-slate-400 mb-1">Nakit Toplam Giriş</div>
+          <div className="text-base font-semibold text-emerald-700">
+            {loading ? '...' : formatTl(reportData?.cashInTotal || 0)}
+          </div>
+        </div>
+        <div className="card p-3 text-sm border-l-4 border-l-green-500">
+          <div className="text-slate-500 text-xs opacity-0">Nakit Hareketleri</div>
+          <div className="text-xs text-slate-400 mb-1">Nakit Toplam Çıkış</div>
+          <div className="text-base font-semibold text-rose-700">
+            {loading ? '...' : formatTl(reportData?.cashOutTotal || 0)}
+          </div>
+        </div>
+        <div className="card p-3 text-sm border-l-4 border-l-green-500">
+          <div className="text-slate-500 text-xs opacity-0">Nakit Hareketleri</div>
+          <div className="text-xs text-slate-400 mb-1">Nakit Net</div>
+          <div className="text-base font-semibold text-slate-800">
+            {loading ? '...' : formatTl(reportData?.cashNet || 0)}
+          </div>
         </div>
       </div>
 
@@ -219,34 +629,23 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
                   </td>
                 </tr>
               )}
-              {girisler.map((tx) => {
-                const bankDelta = tx.bankDelta || 0;
-                const amount = resolveIncomingAmount(tx);
-                // Fix Bug 5: Use bankName from backend if available, otherwise lookup from banks
-                let kaynak = getTransactionSourceLabel(tx.source);
-                if (tx.bankId) {
-                  const bankName = (tx as any).bankName || resolveBankName(tx.bankId);
-                  if (bankName && bankName !== 'Banka') {
-                    kaynak = bankName;
-                  } else if (tx.source === 'BANKA') {
-                    kaynak = resolveBankName(tx.bankId);
-                  }
-                }
-                // Fix Bug 5: Show credit card name if available
-                const creditCardName = (tx as any).creditCardName;
-                if (creditCardName) {
-                  kaynak = `${kaynak} - ${creditCardName}`;
-                }
+              {girisler.map((giris: any, index: number) => {
+                // Backend returns girisler/cikislar with different structure
+                const kaynak = giris.bankName
+                  ? giris.bankName
+                  : giris.creditCardName
+                  ? `${getTransactionSourceLabel(giris.source)} - ${giris.creditCardName}`
+                  : getTransactionSourceLabel(giris.source);
                 return (
-                  <tr key={tx.id} className="border-t">
-                    <td className="px-3 py-2">{isoToDisplay(tx.isoDate)}</td>
-                    <td className="px-3 py-2">{getTransactionTypeLabel(tx.type)}</td>
+                  <tr key={giris.isoDate + index} className="border-t">
+                    <td className="px-3 py-2">{isoToDisplay(giris.isoDate)}</td>
+                    <td className="px-3 py-2">{getTransactionTypeLabel(giris.type)}</td>
                     <td className="px-3 py-2">{kaynak}</td>
-                    <td className="px-3 py-2">{tx.counterparty}</td>
-                    <td className="px-3 py-2 truncate max-w-[160px]" title={tx.description}>
-                      {tx.description}
+                    <td className="px-3 py-2">{giris.counterparty || ''}</td>
+                    <td className="px-3 py-2 truncate max-w-[160px]" title={giris.description || ''}>
+                      {giris.description || ''}
                     </td>
-                    <td className="px-3 py-2 text-right text-emerald-700">{formatTl(amount)}</td>
+                    <td className="px-3 py-2 text-right text-emerald-700">{formatTl(giris.amount)}</td>
                   </tr>
                 );
               })}
@@ -275,33 +674,27 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
                   </td>
                 </tr>
               )}
-              {cikislar.map((tx) => {
-                const bankDelta = tx.bankDelta || 0;
-                const amount = resolveOutgoingAmount(tx);
-                // Fix Bug 5: Use bankName from backend if available, otherwise lookup from banks
-                let kaynak = getTransactionSourceLabel(tx.source);
-                if (tx.type === 'POS_KOMISYONU' && tx.bankId) {
-                  const bankName = (tx as any).bankName || resolveBankName(tx.bankId);
-                  kaynak = `POS (${bankName})`;
-                } else if (tx.source === 'BANKA' && tx.bankId) {
-                  const bankName = (tx as any).bankName || resolveBankName(tx.bankId);
-                  kaynak = bankName;
+              {cikislar.map((cikis: any, index: number) => {
+                // Backend returns girisler/cikislar with different structure
+                let kaynak = getTransactionSourceLabel(cikis.source);
+                if (cikis.type === 'POS_KOMISYONU' && cikis.bankName) {
+                  kaynak = `POS (${cikis.bankName})`;
+                } else if (cikis.bankName) {
+                  kaynak = cikis.bankName;
                 }
-                // Fix Bug 5: Show credit card name if available
-                const creditCardName = (tx as any).creditCardName;
-                if (creditCardName) {
-                  kaynak = `${kaynak} - ${creditCardName}`;
+                if (cikis.creditCardName) {
+                  kaynak = `${kaynak} - ${cikis.creditCardName}`;
                 }
                 return (
-                  <tr key={tx.id} className="border-t">
-                    <td className="px-3 py-2">{isoToDisplay(tx.isoDate)}</td>
-                    <td className="px-3 py-2">{getTransactionTypeLabel(tx.type)}</td>
+                  <tr key={cikis.isoDate + index} className="border-t">
+                    <td className="px-3 py-2">{isoToDisplay(cikis.isoDate)}</td>
+                    <td className="px-3 py-2">{getTransactionTypeLabel(cikis.type)}</td>
                     <td className="px-3 py-2">{kaynak}</td>
-                    <td className="px-3 py-2">{tx.counterparty}</td>
-                    <td className="px-3 py-2 truncate max-w-[160px]" title={tx.description}>
-                      {tx.description}
+                    <td className="px-3 py-2">{cikis.counterparty || ''}</td>
+                    <td className="px-3 py-2 truncate max-w-[160px]" title={cikis.description || ''}>
+                      {cikis.description || ''}
                     </td>
-                    <td className="px-3 py-2 text-right text-rose-700">{formatTl(amount)}</td>
+                    <td className="px-3 py-2 text-right text-rose-700">{formatTl(cikis.amount)}</td>
                   </tr>
                 );
               })}

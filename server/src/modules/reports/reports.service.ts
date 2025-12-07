@@ -272,10 +272,46 @@ export class ReportsService {
     const totalOut = cikislar.reduce((sum: number, c) => sum + c.amount, 0);
     const net = totalIn - totalOut;
 
+    // Calculate bank movement totals (based on bankDelta)
+    let bankInTotal = 0;
+    let bankOutTotal = 0;
+    for (const tx of transactions) {
+      const bankDelta = Number(tx.bankDelta) || 0;
+      if (bankDelta > 0) {
+        bankInTotal += bankDelta;
+      } else if (bankDelta < 0) {
+        bankOutTotal += Math.abs(bankDelta); // Store as positive for display
+      }
+    }
+    const bankNet = bankInTotal - bankOutTotal;
+
+    // Calculate cash movement totals (based on source = KASA and incoming/outgoing)
+    let cashInTotal = 0;
+    let cashOutTotal = 0;
+    for (const tx of transactions) {
+      if (tx.source === 'KASA') {
+        const incoming = Number(tx.incoming) || 0;
+        const outgoing = Number(tx.outgoing) || 0;
+        if (incoming > 0) {
+          cashInTotal += incoming;
+        }
+        if (outgoing > 0) {
+          cashOutTotal += outgoing;
+        }
+      }
+    }
+    const cashNet = cashInTotal - cashOutTotal;
+
     return {
       totalIn,
       totalOut,
       net,
+      bankInTotal,
+      bankOutTotal,
+      bankNet,
+      cashInTotal,
+      cashOutTotal,
+      cashNet,
       girisler,
       cikislar,
     };

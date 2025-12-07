@@ -556,28 +556,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         bankId: isCashToBank && values.bankaId ? values.bankaId : null,
       });
 
-      // Map backend response to frontend format
-      const tx: DailyTransaction = {
-        id: response.id,
-        isoDate: response.isoDate,
-        displayDate: isoToDisplay(response.isoDate),
-        documentNo: response.documentNo || '',
-        type: response.type,
-        source: response.source,
-        counterparty: response.counterparty || '',
-        description: response.description || '',
-        incoming: response.incoming,
-        outgoing: response.outgoing, // Fix: Use outgoing from backend
-        balanceAfter: response.balanceAfter,
-        bankId: response.bankId || undefined,
-        bankDelta: response.bankDelta || undefined,
-        createdAtIso: response.createdAt,
-        createdBy: response.createdBy,
-      };
-      addTransactions([tx]);
-      setOpenForm(null);
-      
-      // Refresh today's transactions from backend to ensure we have the latest data
+      // BUG 1 FIX: Refresh immediately to ensure cashBalance updates correctly for cash out transactions
+      // This ensures that the new transaction's balanceAfter is included in the refresh
       const today = todayIso();
       try {
         const refreshResponse = await apiGet<{ items: any[]; totalCount: number }>(
@@ -594,7 +574,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           description: tx.description || '',
           incoming: tx.incoming,
           outgoing: tx.outgoing,
-          balanceAfter: tx.balanceAfter,
+          balanceAfter: Number(tx.balanceAfter) ?? 0, // BUG 1 FIX: Ensure balanceAfter is a number
           bankId: tx.bankId || undefined,
           bankDelta: tx.bankDelta || undefined,
           displayIncoming: tx.displayIncoming || undefined,
@@ -605,8 +585,27 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         setDailyTransactions(refreshed);
       } catch (refreshError) {
         console.error('Failed to refresh transactions:', refreshError);
-        // Continue anyway - the transaction was already added to state
+        // Fallback: Map backend response to frontend format and add directly
+        const tx: DailyTransaction = {
+          id: response.id,
+          isoDate: response.isoDate,
+          displayDate: isoToDisplay(response.isoDate),
+          documentNo: response.documentNo || '',
+          type: response.type,
+          source: response.source,
+          counterparty: response.counterparty || '',
+          description: response.description || '',
+          incoming: response.incoming,
+          outgoing: response.outgoing,
+          balanceAfter: Number(response.balanceAfter) ?? 0,
+          bankId: response.bankId || undefined,
+          bankDelta: response.bankDelta || undefined,
+          createdAtIso: response.createdAt,
+          createdBy: response.createdBy,
+        };
+        addTransactions([tx]);
       }
+      setOpenForm(null);
     } catch (error) {
       console.error('Failed to save nakit cikis:', error);
       alert('İşlem kaydedilemedi. Lütfen tekrar deneyin.');
@@ -891,7 +890,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           bankId: inResponse.bankId || undefined,
           bankDelta: inResponse.bankDelta || undefined,
           displayIncoming: inResponse.displayIncoming ?? values.tutar, // FIX: Use displayIncoming from backend
-          displayOutgoing: inResponse.displayOutgoing ?? null,
+          displayOutgoing: inResponse.displayOutgoing ?? undefined, // BUG 2 FIX: Use undefined instead of null to prevent showing 0,00 TL
           createdAtIso: inResponse.createdAt,
           createdBy: inResponse.createdBy,
         };
@@ -1833,7 +1832,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                           {tx.displayIncoming !== undefined ? formatTl(tx.displayIncoming) : tx.incoming ? formatTl(tx.incoming) : '-'}
                         </td>
                         <td className="py-2 px-2 text-right text-rose-600">
-                          {tx.displayOutgoing !== undefined 
+                          {/* BUG 2 FIX: Only show displayOutgoing if it's > 0, otherwise show outgoing if > 0, otherwise show '-' */}
+                          {tx.displayOutgoing !== undefined && tx.displayOutgoing !== null && tx.displayOutgoing > 0
                             ? formatTl(tx.displayOutgoing) 
                             : (tx.outgoing !== undefined && tx.outgoing !== null && tx.outgoing > 0) 
                               ? formatTl(tx.outgoing) 

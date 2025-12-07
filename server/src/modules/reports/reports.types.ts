@@ -52,6 +52,14 @@ export interface NakitAkisResponse {
   totalIn: number;
   totalOut: number;
   net: number;
+  // Bank movement totals (based on bankDelta)
+  bankInTotal: number; // Sum of all transactions where bankDelta > 0
+  bankOutTotal: number; // Sum of absolute values where bankDelta < 0 (shown as positive)
+  bankNet: number; // bankInTotal - bankOutTotal
+  // Cash movement totals (based on source = KASA and incoming/outgoing)
+  cashInTotal: number; // Sum of source = KASA and incoming > 0
+  cashOutTotal: number; // Sum of source = KASA and outgoing > 0
+  cashNet: number; // cashInTotal - cashOutTotal
   girisler: {
     isoDate: string;
     type: DailyTransactionType;
