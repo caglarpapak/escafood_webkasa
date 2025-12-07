@@ -12,7 +12,9 @@
  * 3. Deletes all credit cards
  * 4. Deletes all cheques
  * 5. Deletes all banks
- * 6. Keeps all users (they are seeded separately)
+ * 6. Deletes all customers
+ * 7. Deletes all suppliers
+ * 8. Keeps all users (they are seeded separately)
  * 
  * After running this, only users will remain in the database.
  * All business data (banks, cards, cheques, transactions) must be created through the UI.
@@ -47,6 +49,14 @@ async function main() {
   console.log('Deleting all banks...');
   await prisma.bank.deleteMany({});
   console.log('✓ Banks deleted');
+  
+  console.log('Deleting all customers...');
+  await prisma.customer.deleteMany({});
+  console.log('✓ Customers deleted');
+  
+  console.log('Deleting all suppliers...');
+  await prisma.supplier.deleteMany({});
+  console.log('✓ Suppliers deleted');
   
   console.log('');
   console.log('✅ Database reset complete!');
