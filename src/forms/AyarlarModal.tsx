@@ -75,21 +75,31 @@ const AyarlarModal: React.FC<Props> = ({
   const [loading, setLoading] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  // Local state for editing (banks, cards, loans need backend sync)
+  // Local state for editing (all tabs use local state until Save)
   const [localBanks, setLocalBanks] = useState<BankMaster[]>([]);
   const [localCreditCards, setLocalCreditCards] = useState<CreditCard[]>([]);
   const [localLoans, setLocalLoans] = useState<Loan[]>([]);
+  const [localCustomers, setLocalCustomers] = useState<Customer[]>([]);
+  const [localSuppliers, setLocalSuppliers] = useState<Supplier[]>([]);
+  const [localPosTerminals, setLocalPosTerminals] = useState<PosTerminal[]>([]);
   const [globalForm, setGlobalForm] = useState<GlobalSettings>(globalSettings);
   const [bankFlags, setBankFlags] = useState<BankFlagMap>({});
+  // Track opening balances separately to preserve user input (not overwrite with currentBalance)
+  const [openingBalances, setOpeningBalances] = useState<Record<string, number>>({});
 
   // ===== Effects =====
-  // Sync localBanks with banks prop when modal opens
+  // Fetch data when modal opens (only if localBanks is empty - first open or after close)
   useEffect(() => {
     if (!isOpen) return;
+    // Only fetch if we don't have local data yet (first open or after close/reset)
+    if (localBanks.length > 0) {
+      // Already have local data, don't refetch (preserves unsaved changes)
+      return;
+    }
 
     const fetchAll = async () => {
       setLoading(true);
-      setDirty(false);
+      setDirty(false); // Reset dirty on fresh fetch
 
       try {
         const [backendBanks, backendCards, backendLoans] = await Promise.all([
@@ -123,20 +133,22 @@ const AyarlarModal: React.FC<Props> = ({
 
         const flagsFromStorage = loadBankFlagsFromStorage();
 
-        // Map banks
+        // Map banks - for opening balance, use stored value or currentBalance (for new banks with no transactions yet)
         const mappedBanks: BankMaster[] = backendBanks.map((b) => {
           const flags = flagsFromStorage[b.id] || {
             cekKarnesiVarMi: false,
             posVarMi: false,
             krediKartiVarMi: false,
           };
+          // Use stored opening balance if available, otherwise use currentBalance (assumes no transactions yet)
+          const openingBalance = openingBalances[b.id] ?? b.currentBalance;
           return {
             id: b.id,
             bankaAdi: b.name,
             kodu: b.accountNo ? b.accountNo.substring(0, 4).toUpperCase() : 'BNK',
             hesapAdi: b.name + (b.accountNo ? ` - ${b.accountNo}` : ''),
             iban: b.iban || undefined,
-            acilisBakiyesi: b.currentBalance,
+            acilisBakiyesi: openingBalance,
             aktifMi: b.isActive,
             cekKarnesiVarMi: flags.cekKarnesiVarMi ?? false,
             posVarMi: flags.posVarMi ?? false,
@@ -168,16 +180,23 @@ const AyarlarModal: React.FC<Props> = ({
           };
         });
 
+        // Update local and parent state with fresh data
         setLocalBanks(mappedBanks);
         setLocalCreditCards(mappedCards);
         setLocalLoans(backendLoans);
+        setLocalCustomers(customers);
+        setLocalSuppliers(suppliers);
+        setLocalPosTerminals(posTerminals);
         setBankFlags(flagsFromStorage);
         setGlobalForm(globalSettings);
 
-        // Update parent state
+        // Update parent state (only after successful fetch)
         setBanks(mappedBanks);
         setCreditCards(mappedCards);
         setLoans(backendLoans);
+        setCustomers(customers);
+        setSuppliers(suppliers);
+        setPosTerminals(posTerminals);
       } catch (error) {
         console.error('Error fetching settings data:', error);
         alert('Ayarlar yüklenirken bir hata oluştu.');
@@ -187,13 +206,18 @@ const AyarlarModal: React.FC<Props> = ({
     };
 
     fetchAll();
-  }, [isOpen, setBanks, setCreditCards, setLoans, globalSettings]);
+  }, [isOpen]); // Remove dependencies that cause re-fetch on every render
 
   // ===== Handlers =====
   const handleClose = () => {
     if (dirty && !window.confirm('Kaydedilmemiş değişiklikler var. Kapatılsın mı?')) {
       return;
     }
+    // Reset local state on close so it refetches fresh data on next open
+    setLocalBanks([]);
+    setLocalCreditCards([]);
+    setLocalLoans([]);
+    setDirty(false);
     onClose();
   };
 
@@ -203,6 +227,10 @@ const AyarlarModal: React.FC<Props> = ({
   const handleBankFieldChange = (bankId: string, field: keyof BankMaster, value: string | number | boolean) => {
     handleDirty();
     setLocalBanks((prev) => prev.map((b) => (b.id === bankId ? { ...b, [field]: value } : b)));
+    // Track opening balance changes separately
+    if (field === 'acilisBakiyesi') {
+      setOpeningBalances((prev) => ({ ...prev, [bankId]: value as number }));
+    }
   };
 
   const handleBankFlagChange = (bankId: string, field: keyof BankFlagMap[string], value: boolean) => {
@@ -288,13 +316,21 @@ const AyarlarModal: React.FC<Props> = ({
         }>
       >('/api/banks/bulk-save', payload);
 
-      // Extract and save bank flags to localStorage
+      // Map tmp-* IDs to real IDs: backend returns banks in same order as input
+      // Create tempId -> realId mapping
+      const tempIdMap: Record<string, string> = {};
+      localBanks.forEach((localBank, idx) => {
+        if (localBank.id.startsWith('tmp-') && saved[idx]) {
+          tempIdMap[localBank.id] = saved[idx].id;
+        }
+      });
+
+      // Extract and save bank flags to localStorage using real IDs
       const flagsMap: BankFlagMap = {};
       for (const b of localBanks) {
-        // Use saved bank ID (backend may have changed tmp-* to real UUID)
-        const savedBank = saved.find((s) => s.name === b.bankaAdi) || saved.find((s, idx) => idx === localBanks.indexOf(b));
-        const bankId = savedBank?.id || b.id;
-        flagsMap[bankId] = {
+        // Use real ID from mapping if tmp-*, otherwise use existing ID
+        const realId = tempIdMap[b.id] || b.id;
+        flagsMap[realId] = {
           cekKarnesiVarMi: !!b.cekKarnesiVarMi,
           posVarMi: !!b.posVarMi,
           krediKartiVarMi: !!b.krediKartiVarMi,
@@ -304,21 +340,30 @@ const AyarlarModal: React.FC<Props> = ({
       setBankFlags(flagsMap);
 
       // Map saved banks back to BankMaster format
-      const mappedBanks: BankMaster[] = saved.map((b) => {
-        const f = flagsMap[b.id] || {};
+      // Preserve opening balance from user input (stored in openingBalances or localBanks)
+      const newOpeningBalances: Record<string, number> = {};
+      const mappedBanks: BankMaster[] = saved.map((savedBank, idx) => {
+        const localBank = localBanks[idx];
+        const f = flagsMap[savedBank.id] || {};
+        // Preserve the opening balance that user entered
+        const openingBalance = localBank?.acilisBakiyesi ?? openingBalances[savedBank.id] ?? savedBank.currentBalance ?? 0;
+        // Store in newOpeningBalances for batch update
+        newOpeningBalances[savedBank.id] = openingBalance;
         return {
-          id: b.id,
-          bankaAdi: b.name,
-          kodu: b.accountNo ? b.accountNo.substring(0, 4).toUpperCase() : 'BNK',
-          hesapAdi: b.name + (b.accountNo ? ` - ${b.accountNo}` : ''),
-          iban: b.iban || undefined,
-          acilisBakiyesi: b.currentBalance ?? 0,
-          aktifMi: b.isActive,
+          id: savedBank.id, // Use real ID from backend
+          bankaAdi: savedBank.name,
+          kodu: savedBank.accountNo ? savedBank.accountNo.substring(0, 4).toUpperCase() : 'BNK',
+          hesapAdi: savedBank.name + (savedBank.accountNo ? ` - ${savedBank.accountNo}` : ''),
+          iban: savedBank.iban || undefined,
+          acilisBakiyesi: openingBalance, // Use user's opening balance input
+          aktifMi: savedBank.isActive,
           cekKarnesiVarMi: !!f.cekKarnesiVarMi,
           posVarMi: !!f.posVarMi,
           krediKartiVarMi: !!f.krediKartiVarMi,
         };
       });
+      // Update opening balances in one batch
+      setOpeningBalances((prev) => ({ ...prev, ...newOpeningBalances }));
 
       // Update both local and parent state
       setLocalBanks(mappedBanks);
@@ -326,9 +371,12 @@ const AyarlarModal: React.FC<Props> = ({
       setDirty(false);
     } catch (error: any) {
       console.error('Banks save error:', error);
-      const errorMessage = error?.message || 'Bankalar kaydedilirken bir hata oluştu.';
-      alert(errorMessage);
+      console.error('Error response:', error?.response || error);
+      const errorMessage = error?.message || error?.response?.data?.message || 'Bankalar kaydedilirken bir hata oluştu.';
+      alert(`Hata: ${errorMessage}`);
+      // Don't close modal on error - keep it open so user can fix and retry
     } finally {
+      // Always stop loading, whether success or error
       setLoading(false);
     }
   };
@@ -645,14 +693,14 @@ const AyarlarModal: React.FC<Props> = ({
             )}
             {activeTab === 'POS' && (
               <PosTab
-                terminals={posTerminals}
-                banks={banks}
-                onSetTerminals={setPosTerminals}
+                terminals={localPosTerminals}
+                banks={localBanks}
+                onSetTerminals={setLocalPosTerminals}
                 onDirty={handleDirty}
               />
             )}
             {activeTab === 'MUSTERI' && (
-              <CustomersTab customers={customers} onSetCustomers={setCustomers} onDirty={handleDirty} />
+              <CustomersTab customers={localCustomers} onSetCustomers={setLocalCustomers} onDirty={handleDirty} />
             )}
             {activeTab === 'TEDARIKCI' && (
               <SuppliersTab suppliers={suppliers} onSetSuppliers={setSuppliers} onDirty={handleDirty} />

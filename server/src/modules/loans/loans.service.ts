@@ -347,44 +347,59 @@ export class LoansService {
       throw new Error('Loan has been deleted');
     }
 
-    // Create transaction for payment
+    // Atomic transaction: create transaction and update installment together
     const paymentDate = isoDate || installment.dueDate;
-    const transaction = await transactionsService.createTransaction(
-      {
-        isoDate: paymentDate,
-        type: DailyTransactionType.KREDI_TAKSIT_ODEME,
-        source: DailyTransactionSource.BANKA,
-        counterparty: `Kredi Taksit Ödemesi - ${installment.loan.name}`,
-        description: description || `Kredi taksit ödemesi - Taksit #${installment.installmentNumber}`,
-        incoming: 0,
-        outgoing: installment.totalAmount.toNumber(),
-        bankDelta: -installment.totalAmount.toNumber(), // Bank balance decreases
-        bankId: installment.loan.bankId,
-        documentNo: null,
-        cashAccountId: null,
-        creditCardId: null,
-        chequeId: null,
-        customerId: null,
-        supplierId: null,
-        attachmentId: null,
-        displayIncoming: null,
-        displayOutgoing: installment.totalAmount.toNumber(),
-        loanInstallmentId: installmentId,
-      },
-      createdBy
-    );
+    const outgoingAmount = installment.totalAmount.toNumber();
+    const bankDelta = -outgoingAmount; // Bank balance decreases
 
-    // Update installment status
-    await prisma.loanInstallment.update({
-      where: { id: installmentId },
-      data: {
-        status: 'ODEME_ALINDI',
-        paidDate: paymentDate,
-        transactionId: transaction.id,
-        updatedBy: createdBy,
-        updatedAt: new Date(),
-      },
+    // Calculate balance after (for KASA source, but this is BANKA so balanceAfter = 0 for cash)
+    // For bank transactions, we don't calculate cash balance
+    const balanceAfter = 0; // Bank transactions don't affect cash balance
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Create transaction
+      const transaction = await tx.transaction.create({
+        data: {
+          isoDate: paymentDate,
+          type: DailyTransactionType.KREDI_TAKSIT_ODEME,
+          source: DailyTransactionSource.BANKA,
+          counterparty: `Kredi Taksit Ödemesi - ${installment.loan.name}`,
+          description: description || `Kredi taksit ödemesi - Taksit #${installment.installmentNumber}`,
+          incoming: 0,
+          outgoing: outgoingAmount,
+          bankDelta: bankDelta,
+          displayIncoming: null,
+          displayOutgoing: outgoingAmount,
+          balanceAfter: balanceAfter,
+          bankId: installment.loan.bankId,
+          loanInstallmentId: installmentId,
+          documentNo: null,
+          cashAccountId: null,
+          creditCardId: null,
+          chequeId: null,
+          customerId: null,
+          supplierId: null,
+          attachmentId: null,
+          createdBy,
+        },
+      });
+
+      // Update installment status
+      await tx.loanInstallment.update({
+        where: { id: installmentId },
+        data: {
+          status: 'ODEME_ALINDI',
+          paidDate: paymentDate,
+          transactionId: transaction.id,
+          updatedBy: createdBy,
+          updatedAt: new Date(),
+        },
+      });
+
+      return transaction;
     });
+
+    const transaction = result;
 
     // Return updated loan
     const loan = await this.getLoanById(loanId);

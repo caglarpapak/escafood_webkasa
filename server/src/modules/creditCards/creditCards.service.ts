@@ -395,40 +395,48 @@ export class CreditCardsService {
       throw new Error('Credit card not found');
     }
 
-    // Create transaction first (to get its ID)
+    // Calculate balance after
     const balanceAfter = await calculateBalanceAfter(data.isoDate, 0, 0);
 
-    const transaction = await prisma.transaction.create({
-      data: {
-        isoDate: data.isoDate,
-        documentNo: null,
-        type: 'KREDI_KARTI_HARCAMA',
-        source: 'KREDI_KARTI',
-        creditCardId: data.creditCardId,
-        counterparty: data.counterparty || null,
-        description: data.description || null,
-        incoming: 0,
-        outgoing: 0,
-        bankDelta: 0,
-        displayIncoming: null,
-        displayOutgoing: data.amount,
-        balanceAfter,
-        createdBy,
-      },
+    // Atomic transaction: create both transaction and operation together
+    const result = await prisma.$transaction(async (tx) => {
+      // Create transaction
+      const transaction = await tx.transaction.create({
+        data: {
+          isoDate: data.isoDate,
+          documentNo: null,
+          type: 'KREDI_KARTI_HARCAMA',
+          source: 'KREDI_KARTI',
+          creditCardId: data.creditCardId,
+          counterparty: data.counterparty || null,
+          description: data.description || null,
+          incoming: 0,
+          outgoing: 0,
+          bankDelta: 0,
+          displayIncoming: null,
+          displayOutgoing: data.amount,
+          balanceAfter,
+          createdBy,
+        },
+      });
+
+      // Create credit card operation
+      const operation = await tx.creditCardOperation.create({
+        data: {
+          creditCardId: data.creditCardId,
+          isoDate: data.isoDate,
+          type: 'HARCAMA',
+          amount: data.amount, // Positive for HARCAMA
+          description: data.description || null,
+          relatedTransactionId: transaction.id,
+          createdBy,
+        },
+      });
+
+      return { transaction, operation };
     });
 
-    // Create credit card operation
-    const operation = await prisma.creditCardOperation.create({
-      data: {
-        creditCardId: data.creditCardId,
-        isoDate: data.isoDate,
-        type: 'HARCAMA',
-        amount: data.amount, // Positive for HARCAMA
-        description: data.description || null,
-        relatedTransactionId: transaction.id,
-        createdBy,
-      },
-    });
+    const { transaction, operation } = result;
 
     return {
       operation: {
@@ -500,39 +508,46 @@ export class CreditCardsService {
     // Fix: Credit card payment from bank should have source=BANKA
     const transactionSource = data.paymentSource === 'BANKA' ? 'BANKA' : 'KASA';
     
-    // Create transaction
-    const transaction = await prisma.transaction.create({
-      data: {
-        isoDate: data.isoDate,
-        documentNo: null,
-        type: 'KREDI_KARTI_EKSTRE_ODEME',
-        source: transactionSource, // BANKA if payment from bank, KASA if from cash
-        creditCardId: data.creditCardId,
-        bankId,
-        counterparty: null,
-        description: data.description || null,
-        incoming,
-        outgoing,
-        bankDelta,
-        displayIncoming: null,
-        displayOutgoing: null,
-        balanceAfter,
-        createdBy,
-      },
+    // Atomic transaction: create both transaction and operation together
+    const result = await prisma.$transaction(async (tx) => {
+      // Create transaction
+      const transaction = await tx.transaction.create({
+        data: {
+          isoDate: data.isoDate,
+          documentNo: null,
+          type: 'KREDI_KARTI_EKSTRE_ODEME',
+          source: transactionSource, // BANKA if payment from bank, KASA if from cash
+          creditCardId: data.creditCardId,
+          bankId,
+          counterparty: null,
+          description: data.description || null,
+          incoming,
+          outgoing,
+          bankDelta,
+          displayIncoming: null,
+          displayOutgoing: null,
+          balanceAfter,
+          createdBy,
+        },
+      });
+
+      // Create credit card operation
+      const operation = await tx.creditCardOperation.create({
+        data: {
+          creditCardId: data.creditCardId,
+          isoDate: data.isoDate,
+          type: 'ODEME',
+          amount: -data.amount, // Negative for ODEME (reduces debt)
+          description: data.description || null,
+          relatedTransactionId: transaction.id,
+          createdBy,
+        },
+      });
+
+      return { transaction, operation };
     });
 
-    // Create credit card operation
-    const operation = await prisma.creditCardOperation.create({
-      data: {
-        creditCardId: data.creditCardId,
-        isoDate: data.isoDate,
-        type: 'ODEME',
-        amount: -data.amount, // Negative for ODEME (reduces debt)
-        description: data.description || null,
-        relatedTransactionId: transaction.id,
-        createdBy,
-      },
-    });
+    const { transaction, operation } = result;
 
     return {
       operation: {

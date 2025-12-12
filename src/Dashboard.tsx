@@ -301,6 +301,38 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     fetchBanks();
   }, []);
 
+  // Fetch customers and suppliers from localStorage (saved by AyarlarModal)
+  useEffect(() => {
+    try {
+      const savedCustomers = localStorage.getItem('esca-webkasa-customers');
+      const savedSuppliers = localStorage.getItem('esca-webkasa-suppliers');
+      
+      if (savedCustomers) {
+        try {
+          const parsed = JSON.parse(savedCustomers);
+          if (Array.isArray(parsed)) {
+            setCustomers(parsed);
+          }
+        } catch (e) {
+          console.error('Failed to parse customers from localStorage:', e);
+        }
+      }
+      
+      if (savedSuppliers) {
+        try {
+          const parsed = JSON.parse(savedSuppliers);
+          if (Array.isArray(parsed)) {
+            setSuppliers(parsed);
+          }
+        } catch (e) {
+          console.error('Failed to parse suppliers from localStorage:', e);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load customers/suppliers from localStorage:', error);
+    }
+  }, []);
+
   // Fetch today's transactions from backend
   useEffect(() => {
     const fetchTodaysTransactions = async () => {
@@ -531,6 +563,42 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         console.error('Failed to refresh transactions:', refreshError);
         // Continue anyway - the transaction was already added to state
       }
+      
+      // Refresh banks to update bank balances
+      try {
+        const backendBanks = await apiGet<Array<{
+          id: string;
+          name: string;
+          accountNo: string | null;
+          iban: string | null;
+          isActive: boolean;
+          currentBalance: number;
+        }>>('/api/banks');
+        
+        const bankFlagsKey = 'esca-webkasa-bank-flags';
+        const savedFlags = localStorage.getItem(bankFlagsKey);
+        const bankFlags: Record<string, { cekKarnesiVarMi: boolean; posVarMi: boolean; krediKartiVarMi: boolean }> = savedFlags ? JSON.parse(savedFlags) : {};
+        
+        const mappedBanks: BankMaster[] = backendBanks.map((bank) => {
+          const flags = bankFlags[bank.id] || { cekKarnesiVarMi: false, posVarMi: false, krediKartiVarMi: false };
+          return {
+            id: bank.id,
+            bankaAdi: bank.name,
+            kodu: bank.accountNo ? bank.accountNo.substring(0, 4).toUpperCase() : 'BNK',
+            hesapAdi: bank.name + (bank.accountNo ? ` - ${bank.accountNo}` : ''),
+            iban: bank.iban || undefined,
+            acilisBakiyesi: bank.currentBalance,
+            aktifMi: bank.isActive,
+            cekKarnesiVarMi: flags.cekKarnesiVarMi,
+            posVarMi: flags.posVarMi,
+            krediKartiVarMi: flags.krediKartiVarMi,
+          };
+        });
+        setBanks(mappedBanks);
+      } catch (bankRefreshError) {
+        console.error('Failed to refresh banks:', bankRefreshError);
+        // Continue anyway
+      }
     } catch (error) {
       console.error('Failed to save nakit giris:', error);
       alert('İşlem kaydedilemedi. Lütfen tekrar deneyin.');
@@ -622,6 +690,42 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           createdBy: response.createdBy,
     };
     addTransactions([tx]);
+      }
+      
+      // Refresh banks to update bank balances
+      try {
+        const backendBanks = await apiGet<Array<{
+          id: string;
+          name: string;
+          accountNo: string | null;
+          iban: string | null;
+          isActive: boolean;
+          currentBalance: number;
+        }>>('/api/banks');
+        
+        const bankFlagsKey = 'esca-webkasa-bank-flags';
+        const savedFlags = localStorage.getItem(bankFlagsKey);
+        const bankFlags: Record<string, { cekKarnesiVarMi: boolean; posVarMi: boolean; krediKartiVarMi: boolean }> = savedFlags ? JSON.parse(savedFlags) : {};
+        
+        const mappedBanks: BankMaster[] = backendBanks.map((bank) => {
+          const flags = bankFlags[bank.id] || { cekKarnesiVarMi: false, posVarMi: false, krediKartiVarMi: false };
+          return {
+            id: bank.id,
+            bankaAdi: bank.name,
+            kodu: bank.accountNo ? bank.accountNo.substring(0, 4).toUpperCase() : 'BNK',
+            hesapAdi: bank.name + (bank.accountNo ? ` - ${bank.accountNo}` : ''),
+            iban: bank.iban || undefined,
+            acilisBakiyesi: bank.currentBalance,
+            aktifMi: bank.isActive,
+            cekKarnesiVarMi: flags.cekKarnesiVarMi,
+            posVarMi: flags.posVarMi,
+            krediKartiVarMi: flags.krediKartiVarMi,
+          };
+        });
+        setBanks(mappedBanks);
+      } catch (bankRefreshError) {
+        console.error('Failed to refresh banks:', bankRefreshError);
+        // Continue anyway
       }
     setOpenForm(null);
     } catch (error) {

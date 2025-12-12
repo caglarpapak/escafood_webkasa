@@ -7,61 +7,79 @@ import {
   TransactionListResponse,
   TransactionDto,
 } from './transactions.types';
+import { normalizeTransactionPayload } from './transactions.normalization';
 
 /**
  * Calculate cash balance after a transaction
- * IMPORTANT: Only transactions with source = KASA affect the main cash balance.
- * Bank transactions (source = BANKA) do NOT affect the main cash balance.
- */
-/**
- * Calculate cash balance after a transaction
- * BUG 1 FIX: Cash balance = startCash (0) + Σ(cashDelta) in chronological order
- * where cashDelta = incoming - outgoing for KASA transactions only
  * 
- * Test scenario:
- * - starting cash = 0
- * - row1: NAKIT_TAHSILAT (KASA) 20.000 → balance 20.000
- * - row2: NAKIT_ODEME (KASA) 10.000 → balance 10.000
- * - row3: NAKIT_TAHSILAT (KASA) 50.000 → balance 60.000
+ * Refactored to be more robust:
+ * - Accepts cashAccountId (optional) for future multi-account support
+ * - Uses storedSource from transaction records (not client-provided source)
+ * - Computes balance using aggregate or ordered findMany
+ * - Handles exclusion of current transaction for updates
  * 
- * At no point should the balance show 30.000, -10.000 or any other incorrect value.
+ * Rules:
+ * - Only transactions with source = KASA affect cash balance
+ * - Bank transactions (source = BANKA) do NOT affect cash balance
+ * - Balance = Σ(incoming - outgoing) for all KASA transactions up to isoDate (inclusive)
+ * - Transactions are ordered by isoDate (asc), then createdAt (asc) for consistency
+ * 
+ * @param isoDate - Date up to which to calculate balance (inclusive)
+ * @param incoming - Incoming amount for current transaction
+ * @param outgoing - Outgoing amount for current transaction
+ * @param storedSource - Source stored in DB (KASA or BANKA)
+ * @param excludeTransactionId - Optional transaction ID to exclude from calculation
+ * @param cashAccountId - Optional cash account ID (for future multi-account support)
+ * @returns Calculated cash balance after the transaction
  */
 async function calculateBalanceAfter(
   isoDate: string,
   incoming: number,
   outgoing: number,
-  source: string, // Add source parameter to determine if this affects cash balance
-  excludeTransactionId?: string
+  storedSource: string,
+  excludeTransactionId?: string,
+  cashAccountId?: string | null
 ): Promise<number> {
+  // Build where clause: only KASA transactions affect cash balance
   const where: any = {
     deletedAt: null,
     isoDate: { lte: isoDate },
     source: 'KASA', // Only include KASA transactions in cash balance calculation
   };
 
+  // Exclude specific transaction (for updates)
   if (excludeTransactionId) {
     where.id = { not: excludeTransactionId };
   }
 
+  // Future: filter by cashAccountId if provided
+  if (cashAccountId) {
+    where.cashAccountId = cashAccountId;
+  }
+
+  // Use aggregate for better performance on large datasets
+  // But we need chronological order, so use findMany with ordering
   const transactions = await prisma.transaction.findMany({
     where,
+    select: {
+      incoming: true,
+      outgoing: true,
+    },
     orderBy: [
       { isoDate: 'asc' },
       { createdAt: 'asc' },
     ],
   });
 
-  // BUG 1 FIX: Start from 0, accumulate cashDelta = incoming - outgoing for KASA transactions
-  // cashDelta > 0 for cash-in (NAKIT_TAHSILAT with source KASA)
-  // cashDelta < 0 for cash-out (NAKIT_ODEME with source KASA)
+  // Calculate running balance: sum of (incoming - outgoing) for all transactions
   let balance = 0;
   for (const tx of transactions) {
     const cashDelta = Number(tx.incoming) - Number(tx.outgoing);
     balance += cashDelta;
   }
 
-  // Only add current transaction if it's a KASA transaction
-  if (source === 'KASA') {
+  // Add current transaction if it's a KASA transaction
+  if (storedSource === 'KASA') {
     const cashDelta = incoming - outgoing;
     balance += cashDelta;
   }
@@ -83,87 +101,19 @@ export class TransactionsService {
    * 7) CREDIT CARD PAYMENT: source=BANKA, outgoing=amount, bankDelta=-amount
    */
   async createTransaction(data: CreateTransactionDto, createdBy: string): Promise<TransactionDto> {
-    // Apply strict transaction mapping based on type and source
-    let incoming = data.incoming ?? 0;
-    let outgoing = data.outgoing ?? 0;
-    let bankDelta = data.bankDelta ?? 0;
-    
-    // Fix: Apply strict mapping rules
-    if (data.type === 'NAKIT_TAHSILAT' && data.source === 'KASA') {
-      // CASH IN: incoming=amount, outgoing=0, bankDelta=0
-      incoming = data.incoming ?? 0;
-      outgoing = 0;
-      bankDelta = 0;
-    } else if (data.type === 'NAKIT_ODEME' && data.source === 'KASA') {
-      // CASH OUT: incoming=0, outgoing=amount, bankDelta=0
-      incoming = 0;
-      outgoing = data.outgoing ?? 0;
-      bankDelta = 0;
-    } else if (data.type === 'NAKIT_TAHSILAT' && data.source === 'BANKA') {
-      // BANK CASH IN: incoming=0, outgoing=0, bankDelta=+amount
-      incoming = 0;
-      outgoing = 0;
-      bankDelta = data.incoming ?? 0; // Use incoming as the amount for bank cash in
-    } else if (data.type === 'NAKIT_ODEME' && data.source === 'BANKA') {
-      // BANK CASH OUT: incoming=0, outgoing=amount, bankDelta=-amount
-      // BUG 3 FIX: Ensure outgoing is positive and bankDelta is negative
-      incoming = 0;
-      outgoing = data.outgoing ?? 0;
-      if (outgoing <= 0) {
-        throw new Error('Bank cash out amount must be greater than 0');
-      }
-      bankDelta = -outgoing; // Always negative for cash out
-    } else if (data.type === 'POS_TAHSILAT_BRUT') {
-      // BUG 5 FIX: POS COLLECTION: incoming=0, outgoing=0, bankDelta=+netAmount
-      // Frontend sends bankDelta as netTutar (brut - commission), use that value
-      incoming = 0;
-      outgoing = 0;
-      // Use provided bankDelta (net amount) if set, otherwise fall back to displayIncoming (shouldn't happen)
-      bankDelta = data.bankDelta ?? (data.displayIncoming ?? 0);
-    } else if (data.type === 'POS_KOMISYONU') {
-      // POS COMMISSION: incoming=0, outgoing=0 (displayOutgoing shows commission), bankDelta=-commissionAmount
-      incoming = 0;
-      outgoing = 0;
-      bankDelta = data.bankDelta ?? 0; // Should be negative commission amount
-    } else if (data.type === 'KREDI_KARTI_HARCAMA') {
-      // CREDIT CARD EXPENSE: incoming=0, outgoing=0, bankDelta=0
-      incoming = 0;
-      outgoing = 0;
-      bankDelta = 0;
-    } else if (data.type === 'KREDI_KARTI_EKSTRE_ODEME') {
-      // CREDIT CARD PAYMENT: 
-      // - If source=BANKA: incoming=0, outgoing=amount, bankDelta=-amount
-      // - If source=KASA: incoming=0, outgoing=amount, bankDelta=0
-      incoming = 0;
-      outgoing = data.outgoing ?? 0;
-      if (data.source === 'BANKA') {
-        bankDelta = -(data.outgoing ?? 0);
-      } else {
-        bankDelta = 0;
-      }
-    } else if (data.type === 'BANKA_KASA_TRANSFER') {
-      // BANK TO CASH TRANSFER: Money moves from bank to cash
-      // incoming=amount (cash increases), outgoing=0, bankDelta=-amount (bank decreases)
-      // IMPORTANT: source must be KASA so it affects cash balance calculation
-      incoming = data.incoming ?? 0;
-      outgoing = 0;
-      bankDelta = -(data.incoming ?? 0); // Bank decreases
-    } else if (data.type === 'KASA_BANKA_TRANSFER') {
-      // CASH TO BANK TRANSFER: Money moves from cash to bank
-      // incoming=0, outgoing=amount (cash decreases), bankDelta=+amount (bank increases)
-      // IMPORTANT: source must be KASA so it affects cash balance calculation
-      incoming = 0;
-      outgoing = data.outgoing ?? 0;
-      bankDelta = data.outgoing ?? 0; // Bank increases
-    }
-    // For other transaction types, use provided values (they may have custom logic)
-    
-    // For BANKA_KASA_TRANSFER and KASA_BANKA_TRANSFER, use KASA as source for balance calculation
-    // even though the transaction type indicates bank involvement
-    const balanceSource = (data.type === 'BANKA_KASA_TRANSFER' || data.type === 'KASA_BANKA_TRANSFER') 
-      ? 'KASA' 
-      : data.source;
-    const balanceAfter = await calculateBalanceAfter(data.isoDate, incoming, outgoing, balanceSource);
+    // Normalize transaction payload to canonical form
+    const normalized = normalizeTransactionPayload(data);
+    const { incoming, outgoing, bankDelta, storedSource } = normalized;
+
+    // Calculate balance after using normalized amounts and stored source
+    const balanceAfter = await calculateBalanceAfter(
+      data.isoDate,
+      incoming,
+      outgoing,
+      storedSource,
+      undefined, // No exclusion for new transactions
+      data.cashAccountId ?? null
+    );
 
     // Data has already been validated by Zod schema, so bankId and creditCardId are either
     // valid UUID strings or null. We just need to ensure they're properly typed.
@@ -200,32 +150,26 @@ export class TransactionsService {
       console.log(`Bank verified: ${bank.name} (${bank.id})`);
     }
 
-    // Log for debugging - detailed logging
+    // Log for debugging - detailed logging with normalized values
     console.log('=== CREATE TRANSACTION SERVICE ===');
     console.log('Input data:', JSON.stringify(data, null, 2));
+    console.log('Normalized amounts:', { incoming, outgoing, bankDelta, storedSource });
     console.log('bankId:', bankId);
     console.log('creditCardId:', creditCardId);
-    console.log('Incoming:', incoming, 'Outgoing:', outgoing, 'BankDelta:', data.bankDelta || 0);
     console.log('Balance after:', balanceAfter);
     console.log('Created by:', createdBy);
-
     // Prepare Prisma data - ensure all FKs are either valid UUID strings or null
     // Data has already been validated by Zod, so we can trust the types
-    // For BANKA_KASA_TRANSFER and KASA_BANKA_TRANSFER, store source as KASA in DB
-    // so it's included in cash balance calculations
-    const storedSource = (data.type === 'BANKA_KASA_TRANSFER' || data.type === 'KASA_BANKA_TRANSFER') 
-      ? 'KASA' 
-      : data.source;
     const prismaData = {
       isoDate: data.isoDate,
       documentNo: data.documentNo ?? null,
       type: data.type,
-      source: storedSource,
+      source: storedSource, // Use normalized stored source
       counterparty: data.counterparty ?? null,
       description: data.description ?? null,
-      incoming: incoming,
-      outgoing: outgoing,
-      bankDelta: bankDelta,
+      incoming: incoming, // Use normalized incoming
+      outgoing: outgoing, // Use normalized outgoing
+      bankDelta: bankDelta, // Use normalized bankDelta
       displayIncoming: data.displayIncoming ?? null,
       displayOutgoing: data.displayOutgoing ?? null,
       balanceAfter: balanceAfter,
@@ -240,7 +184,7 @@ export class TransactionsService {
       createdBy,
     };
 
-    console.log('Prisma create data:', JSON.stringify(prismaData, null, 2));
+    console.log('Prisma create data (normalized):', JSON.stringify(prismaData, null, 2));
 
     try {
       const transaction = await prisma.transaction.create({
@@ -292,11 +236,14 @@ export class TransactionsService {
     }
 
     // Recalculate balance if amounts changed
+    // Use normalized values if source/type changed, otherwise use existing
     const incoming = data.incoming !== undefined ? data.incoming : Number(existing.incoming);
     const outgoing = data.outgoing !== undefined ? data.outgoing : Number(existing.outgoing);
     const isoDate = data.isoDate || existing.isoDate;
-    const source = data.source || existing.source;
-    const balanceAfter = await calculateBalanceAfter(isoDate, incoming, outgoing, source, id);
+    // Use stored source from existing transaction (or normalized if type changed)
+    const storedSource = data.source || existing.source;
+    const cashAccountId = data.cashAccountId !== undefined ? data.cashAccountId : existing.cashAccountId;
+    const balanceAfter = await calculateBalanceAfter(isoDate, incoming, outgoing, storedSource, id, cashAccountId);
 
     const updated = await prisma.transaction.update({
       where: { id },
