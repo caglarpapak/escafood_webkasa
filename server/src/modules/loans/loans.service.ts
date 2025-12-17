@@ -118,18 +118,6 @@ export class LoansService {
       orderBy: { createdAt: 'desc' },
     });
 
-    // DEBUG: Log raw loans from DB
-    console.log('[BUG-2 DEBUG] listLoans - Raw loans from DB:', JSON.stringify(loans.map(l => ({
-      id: l.id,
-      name: l.name,
-      installments: l.installments.map(inst => ({
-        id: inst.id,
-        installmentNumber: inst.installmentNumber,
-        status: inst.status,
-        dueDate: inst.dueDate,
-        paidDate: inst.paidDate
-      }))
-    })), null, 2));
 
     return loans.map((loan) => ({
       id: loan.id,
@@ -381,9 +369,6 @@ export class LoansService {
     // For bank transactions, we don't calculate cash balance
     const balanceAfter = 0; // Bank transactions don't affect cash balance
 
-    // DEBUG: Log payment attempt
-    console.log(`[BUG-2 DEBUG] payInstallment - Starting payment for loanId=${loanId}, installmentId=${installmentId}`);
-    console.log(`[BUG-2 DEBUG] payInstallment - Installment status before: ${installment.status}, dueDate: ${installment.dueDate}`);
 
     const result = await prisma.$transaction(async (tx) => {
       // Create transaction
@@ -425,8 +410,6 @@ export class LoansService {
         },
       });
 
-      // DEBUG: Log installment update
-      console.log(`[BUG-2 DEBUG] payInstallment - Installment ${installmentId} updated: status=${updatedInstallment.status}, paidDate=${updatedInstallment.paidDate}`);
 
       return transaction;
     });
@@ -439,12 +422,6 @@ export class LoansService {
       throw new Error('Loan not found after payment');
     }
 
-    // DEBUG: Log returned loan installments
-    console.log(`[BUG-2 DEBUG] payInstallment - Returned loan ${loanId} installments:`, loan.installments?.map(inst => ({
-      installmentNumber: inst.installmentNumber,
-      status: inst.status,
-      dueDate: inst.dueDate
-    })));
 
     return { loan, transaction };
   }

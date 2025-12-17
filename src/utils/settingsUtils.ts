@@ -1,6 +1,7 @@
 import { Customer } from '../models/customer';
 import { Supplier } from '../models/supplier';
 import { BankMaster } from '../models/bank';
+import { PosTerminal } from '../models/pos';
 import { generateId } from './id';
 
 // Storage keys
@@ -8,6 +9,7 @@ export const BANK_FLAGS_STORAGE_KEY = 'esca-webkasa-bank-flags';
 export const CARD_EXTRAS_STORAGE_KEY = 'esca-webkasa-card-extras';
 export const CUSTOMERS_STORAGE_KEY = 'esca-webkasa-customers';
 export const SUPPLIERS_STORAGE_KEY = 'esca-webkasa-suppliers';
+export const POS_TERMINALS_STORAGE_KEY = 'esca-webkasa-pos-terminals';
 
 // CSV delimiter
 export const CSV_DELIMITER = ';';
@@ -137,6 +139,30 @@ export function saveSuppliersToStorage(suppliers: Supplier[]): void {
     localStorage.setItem(SUPPLIERS_STORAGE_KEY, JSON.stringify(suppliers));
   } catch (error) {
     console.error('Failed to save suppliers to localStorage:', error);
+  }
+}
+
+/**
+ * Load POS terminals from localStorage
+ */
+export function loadPosTerminalsFromStorage(): PosTerminal[] {
+  try {
+    const raw = localStorage.getItem(POS_TERMINALS_STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as PosTerminal[];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save POS terminals to localStorage
+ */
+export function savePosTerminalsToStorage(terminals: PosTerminal[]): void {
+  try {
+    localStorage.setItem(POS_TERMINALS_STORAGE_KEY, JSON.stringify(terminals));
+  } catch (error) {
+    console.error('Failed to save POS terminals to localStorage:', error);
   }
 }
 

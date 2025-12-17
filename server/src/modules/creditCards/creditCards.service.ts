@@ -101,13 +101,6 @@ export class CreditCardsService {
         ? Number(card.sonEkstreBorcu) 
         : 0;
 
-      // DEBUG: Log card values from DB
-      console.log(`[BUG-1 DEBUG] listCreditCards - Card ${card.id} (${card.name}):`, {
-        db_sonEkstreBorcu: card.sonEkstreBorcu?.toString(),
-        db_manualGuncelBorc: card.manualGuncelBorc?.toString(),
-        mapped_sonEkstreBorcu: sonEkstreBorcu,
-        mapped_manualGuncelBorc: manualGuncelBorc
-      });
 
       return {
         id: card.id,
@@ -403,10 +396,35 @@ export class CreditCardsService {
       throw new Error('Credit card not found');
     }
 
+
     // Calculate balance after
     const balanceAfter = await calculateBalanceAfter(data.isoDate, 0, 0);
 
-    // Atomic transaction: create both transaction and operation together
+    // Determine if transaction date is before or on closing day
+    const transactionDay = parseInt(data.isoDate.split('-')[2] || '0', 10);
+    const closingDay = card.closingDay || 31; // Default to 31 if not set
+    const isBeforeCutoff = transactionDay <= closingDay;
+
+    // Calculate new debt values
+    const currentSonEkstreBorcu = card.sonEkstreBorcu !== null && card.sonEkstreBorcu !== undefined 
+      ? Number(card.sonEkstreBorcu) 
+      : 0;
+    const currentManualGuncelBorc = card.manualGuncelBorc !== null && card.manualGuncelBorc !== undefined
+      ? Number(card.manualGuncelBorc)
+      : null;
+
+    // Update rules:
+    // - If transaction date <= closingDay: sonEkstreBorcu += amount
+    // - Always: manualGuncelBorc += amount (or set to amount if null)
+    const newSonEkstreBorcu = isBeforeCutoff 
+      ? currentSonEkstreBorcu + data.amount 
+      : currentSonEkstreBorcu;
+    const newManualGuncelBorc = currentManualGuncelBorc !== null
+      ? currentManualGuncelBorc + data.amount
+      : data.amount;
+
+
+    // Atomic transaction: create transaction, operation, and update credit card together
     const result = await prisma.$transaction(async (tx) => {
       // Create transaction
       const transaction = await tx.transaction.create({
@@ -441,10 +459,54 @@ export class CreditCardsService {
         },
       });
 
-      return { transaction, operation };
+      // CRITICAL FIX: Update credit card debt values atomically
+      const updatedCard = await tx.creditCard.update({
+        where: { id: data.creditCardId },
+        data: {
+          sonEkstreBorcu: newSonEkstreBorcu,
+          manualGuncelBorc: newManualGuncelBorc,
+          updatedAt: new Date(),
+          updatedBy: createdBy,
+        },
+        include: {
+          bank: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          operations: {
+            where: {
+              deletedAt: null,
+            },
+            select: {
+              isoDate: true,
+              amount: true,
+            },
+            orderBy: {
+              isoDate: 'desc',
+            },
+          },
+        },
+      });
+
+
+      return { transaction, operation, updatedCard };
     });
 
-    const { transaction, operation } = result;
+    const { transaction, operation, updatedCard } = result;
+
+    // Calculate response values
+    const limit = updatedCard.limit !== null && updatedCard.limit !== undefined ? Number(updatedCard.limit) : null;
+    const manualGuncelBorc = updatedCard.manualGuncelBorc !== null && updatedCard.manualGuncelBorc !== undefined 
+      ? Number(updatedCard.manualGuncelBorc) 
+      : null;
+    const calculatedDebt = updatedCard.operations.reduce((sum: number, op) => sum + Number(op.amount), 0);
+    const currentDebt = manualGuncelBorc !== null ? manualGuncelBorc : calculatedDebt;
+    const availableLimit = limit !== null ? limit - currentDebt : null;
+    const sonEkstreBorcu = updatedCard.sonEkstreBorcu !== null && updatedCard.sonEkstreBorcu !== undefined 
+      ? Number(updatedCard.sonEkstreBorcu) 
+      : 0;
 
     return {
       operation: {
@@ -471,6 +533,22 @@ export class CreditCardsService {
         counterparty: transaction.counterparty,
         description: transaction.description,
         displayOutgoing: transaction.displayOutgoing ? Number(transaction.displayOutgoing) : null,
+      },
+      // CRITICAL FIX: Include updated credit card in response
+      creditCard: {
+        id: updatedCard.id,
+        name: updatedCard.name,
+        bankId: updatedCard.bankId,
+        limit,
+        closingDay: updatedCard.closingDay,
+        dueDay: updatedCard.dueDay,
+        sonEkstreBorcu,
+        manualGuncelBorc,
+        isActive: updatedCard.isActive,
+        currentDebt,
+        availableLimit,
+        lastOperationDate: updatedCard.operations.length > 0 ? updatedCard.operations[0].isoDate : null,
+        bank: updatedCard.bank || null,
       },
     };
   }
@@ -605,13 +683,6 @@ export class CreditCardsService {
     }>,
     userId: string
   ): Promise<CreditCardDto[]> {
-    // DEBUG: Log incoming payload
-    console.log('[BUG-1 DEBUG] bulkSaveCreditCards - Incoming payload:', JSON.stringify(payload.map(p => ({
-      id: p.id,
-      name: p.name,
-      sonEkstreBorcu: p.sonEkstreBorcu,
-      manualGuncelBorc: p.manualGuncelBorc
-    })), null, 2));
     
     const results: CreditCardDto[] = [];
 
@@ -620,18 +691,23 @@ export class CreditCardsService {
 
       if (isNew) {
         // Create new credit card
+        // CRITICAL FIX: Explicitly handle sonEkstreBorcu and manualGuncelBorc
+        // If provided (even if 0), use it; otherwise use defaults
+        const createData = {
+          name: item.name,
+          bankId: item.bankId ?? null,
+          limit: item.limit ?? null,
+          closingDay: item.closingDay ?? null,
+          dueDay: item.dueDay ?? null,
+          sonEkstreBorcu: item.sonEkstreBorcu !== undefined ? item.sonEkstreBorcu : 0,
+          manualGuncelBorc: item.manualGuncelBorc !== undefined ? item.manualGuncelBorc : null,
+          isActive: item.isActive ?? true,
+          createdBy: userId,
+        };
+        
+        
         const created = await prisma.creditCard.create({
-          data: {
-            name: item.name,
-            bankId: item.bankId ?? null,
-            limit: item.limit ?? null,
-            closingDay: item.closingDay ?? null,
-            dueDay: item.dueDay ?? null,
-            sonEkstreBorcu: item.sonEkstreBorcu ?? 0,
-            manualGuncelBorc: item.manualGuncelBorc ?? null,
-            isActive: item.isActive ?? true,
-            createdBy: userId,
-          },
+          data: createData,
           include: {
             bank: {
               select: {
@@ -692,42 +768,47 @@ export class CreditCardsService {
           continue; // Skip deleted or non-existent cards
         }
 
-        // DEBUG: Log what will be written to DB
-        const dbData = {
+
+        // CRITICAL FIX: Always update sonEkstreBorcu and manualGuncelBorc if provided in payload
+        // This ensures user-entered values (including 0) are preserved
+        // The controller now includes these fields in the payload, so they should always be present
+        const updateData: any = {
           name: item.name,
           bankId: item.bankId !== undefined ? item.bankId : existing.bankId,
           limit: item.limit !== undefined ? item.limit : existing.limit,
           closingDay: item.closingDay !== undefined ? item.closingDay : existing.closingDay,
           dueDay: item.dueDay !== undefined ? item.dueDay : existing.dueDay,
-          sonEkstreBorcu: item.sonEkstreBorcu !== undefined ? item.sonEkstreBorcu : existing.sonEkstreBorcu,
-          manualGuncelBorc: item.manualGuncelBorc !== undefined ? item.manualGuncelBorc : existing.manualGuncelBorc,
           isActive: item.isActive !== undefined ? item.isActive : existing.isActive,
+          updatedAt: new Date(),
+          updatedBy: userId,
         };
-        console.log(`[BUG-1 DEBUG] Updating card ${item.id} (${item.name}):`, JSON.stringify({
-          incoming: { sonEkstreBorcu: item.sonEkstreBorcu, manualGuncelBorc: item.manualGuncelBorc },
-          existing: { sonEkstreBorcu: existing.sonEkstreBorcu, manualGuncelBorc: existing.manualGuncelBorc },
-          willWrite: { sonEkstreBorcu: dbData.sonEkstreBorcu, manualGuncelBorc: dbData.manualGuncelBorc }
-        }, null, 2));
+        
+        // sonEkstreBorcu: if provided (even if 0), use it; otherwise keep existing
+        if (item.sonEkstreBorcu !== undefined) {
+          updateData.sonEkstreBorcu = typeof item.sonEkstreBorcu === 'number' 
+            ? item.sonEkstreBorcu 
+            : Number(item.sonEkstreBorcu);
+        } else {
+          updateData.sonEkstreBorcu = existing.sonEkstreBorcu;
+        }
+        
+        // manualGuncelBorc: if provided as number (even if 0), use it; if null, set to null; otherwise keep existing
+        if (item.manualGuncelBorc !== undefined) {
+          if (item.manualGuncelBorc === null) {
+            updateData.manualGuncelBorc = null;
+          } else {
+            updateData.manualGuncelBorc = typeof item.manualGuncelBorc === 'number'
+              ? item.manualGuncelBorc
+              : Number(item.manualGuncelBorc);
+          }
+        } else {
+          updateData.manualGuncelBorc = existing.manualGuncelBorc;
+        }
+        
 
         const updated = await prisma.creditCard.update({
           where: { id: item.id },
-          data: {
-            name: item.name,
-            bankId: item.bankId !== undefined ? item.bankId : existing.bankId,
-            limit: item.limit !== undefined ? item.limit : existing.limit,
-            closingDay: item.closingDay !== undefined ? item.closingDay : existing.closingDay,
-            dueDay: item.dueDay !== undefined ? item.dueDay : existing.dueDay,
-            // Always update sonEkstreBorcu and manualGuncelBorc if provided (even if 0 or null)
-            // This ensures user-entered values are preserved
-            // CRITICAL FIX: Frontend always sends these fields (null or number), so we should always update them
-            // If frontend sends null, it means user wants to clear the value (let it be calculated from operations)
-            // If frontend sends a number, it means user wants to set a manual value
-            sonEkstreBorcu: item.sonEkstreBorcu !== undefined ? item.sonEkstreBorcu : existing.sonEkstreBorcu,
-            manualGuncelBorc: item.manualGuncelBorc !== undefined ? item.manualGuncelBorc : existing.manualGuncelBorc,
-            isActive: item.isActive !== undefined ? item.isActive : existing.isActive,
-            updatedAt: new Date(),
-            updatedBy: userId,
-          },
+          data: updateData,
           include: {
             bank: {
               select: {
@@ -765,12 +846,6 @@ export class CreditCardsService {
           ? Number(updated.sonEkstreBorcu) 
           : 0;
 
-        // DEBUG: Log what will be returned
-        console.log(`[BUG-1 DEBUG] Card ${updated.id} (${updated.name}) after update - DB values:`, {
-          sonEkstreBorcu: updated.sonEkstreBorcu?.toString(),
-          manualGuncelBorc: updated.manualGuncelBorc?.toString(),
-          mapped: { sonEkstreBorcu, manualGuncelBorc }
-        });
 
         results.push({
           id: updated.id,
@@ -796,13 +871,6 @@ export class CreditCardsService {
       }
     }
 
-    // DEBUG: Log final results
-    console.log('[BUG-1 DEBUG] bulkSaveCreditCards - Final results:', JSON.stringify(results.map(r => ({
-      id: r.id,
-      name: r.name,
-      sonEkstreBorcu: r.sonEkstreBorcu,
-      manualGuncelBorc: r.manualGuncelBorc
-    })), null, 2));
     
     return results;
   }

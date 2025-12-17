@@ -15,6 +15,8 @@ import {
   saveCustomersToStorage,
   loadSuppliersFromStorage,
   saveSuppliersToStorage,
+  loadPosTerminalsFromStorage,
+  savePosTerminalsToStorage,
   type BankFlagMap,
 } from '../utils/settingsUtils';
 import BanksTab from '../components/settings/BanksTab';
@@ -146,6 +148,7 @@ const AyarlarModal: React.FC<Props> = ({
               currentBalance: number;
             }>
           >('/api/banks'),
+          // BUG-1 FIX: Backend contract - must include sonEkstreBorcu and manualGuncelBorc
           apiGet<
             Array<{
               id: string;
@@ -154,12 +157,12 @@ const AyarlarModal: React.FC<Props> = ({
               limit: number | null;
               closingDay: number | null;
               dueDay: number | null;
-              sonEkstreBorcu: number;
-              manualGuncelBorc: number | null;
+              sonEkstreBorcu: number; // REQUIRED: Last statement balance from DB
+              manualGuncelBorc: number | null; // REQUIRED: Manual current debt override
               isActive: boolean;
-              currentDebt: number;
-              availableLimit: number | null;
-              lastOperationDate: string | null;
+              currentDebt?: number; // Optional computed field
+              availableLimit?: number | null; // Optional computed field
+              lastOperationDate?: string | null;
               bank?: { id: string; name: string } | null;
             }>
           >('/api/credit-cards'),
@@ -191,12 +194,24 @@ const AyarlarModal: React.FC<Props> = ({
           };
         });
 
-        // Map credit cards with localStorage extras (only for asgariOran and maskeliKartNo)
+        // BUG-1 FIX: localStorage ONLY for UI helpers, NOT for debt values
         const cardExtras = loadCardExtrasFromStorage();
+        
+        // BUG-1 FIX: Robust mapping with fallback - backend is authoritative source
         const mappedCards: CreditCard[] = backendCards.map((c) => {
-          const limit = c.limit;
-          const availableLimit = c.availableLimit;
-          const extras = cardExtras[c.id] || { sonEkstreBorcu: 0, asgariOran: 0.4, maskeliKartNo: '' };
+          const limit = c.limit ?? null;
+          const extras = cardExtras[c.id] || { asgariOran: 0.4, maskeliKartNo: '' };
+          
+          // BUG-1 FIX: Debt values from backend with fallback
+          const sonEkstreBorcu = Number(c.sonEkstreBorcu ?? 0);
+          const guncelBorc = c.manualGuncelBorc !== null && c.manualGuncelBorc !== undefined 
+            ? Number(c.manualGuncelBorc) 
+            : (c.currentDebt !== undefined ? Number(c.currentDebt) : null);
+          
+          // kullanilabilirLimit: calculate from limit and guncelBorc
+          const kullanilabilirLimit = limit !== null && guncelBorc !== null 
+            ? limit - guncelBorc 
+            : (c.availableLimit ?? null);
 
           return {
             id: c.id,
@@ -204,14 +219,14 @@ const AyarlarModal: React.FC<Props> = ({
             kartAdi: c.name,
             kartLimit: limit,
             limit: limit,
-            kullanilabilirLimit: availableLimit,
-            asgariOran: extras.asgariOran,
+            kullanilabilirLimit: kullanilabilirLimit,
+            asgariOran: extras.asgariOran, // From localStorage (UI helper only)
             hesapKesimGunu: c.closingDay ?? 1,
             sonOdemeGunu: c.dueDay ?? 1,
-            maskeliKartNo: extras.maskeliKartNo,
+            maskeliKartNo: extras.maskeliKartNo, // From localStorage (UI helper only)
             aktifMi: c.isActive,
-            sonEkstreBorcu: c.sonEkstreBorcu !== undefined && c.sonEkstreBorcu !== null ? c.sonEkstreBorcu : 0, // Use from backend, not localStorage
-            guncelBorc: c.manualGuncelBorc !== null && c.manualGuncelBorc !== undefined ? c.manualGuncelBorc : null, // Use from backend
+            sonEkstreBorcu, // From backend (authoritative)
+            guncelBorc, // From backend (authoritative)
           };
         });
 
@@ -222,14 +237,17 @@ const AyarlarModal: React.FC<Props> = ({
         // Load customers and suppliers from localStorage (no backend endpoint yet)
         const savedCustomers = loadCustomersFromStorage();
         const savedSuppliers = loadSuppliersFromStorage();
-        console.log('AyarlarModal fetchAll - savedCustomers:', savedCustomers.length, 'savedSuppliers:', savedSuppliers.length);
-        console.log('AyarlarModal fetchAll - props customers:', customers.length, 'props suppliers:', suppliers.length);
+        const savedPosTerminals = loadPosTerminalsFromStorage();
+        console.log('AyarlarModal fetchAll - savedCustomers:', savedCustomers.length, 'savedSuppliers:', savedSuppliers.length, 'savedPosTerminals:', savedPosTerminals.length);
+        console.log('AyarlarModal fetchAll - props customers:', customers.length, 'props suppliers:', suppliers.length, 'props posTerminals:', posTerminals.length);
         // Use saved data if available, otherwise use props (which may be empty)
         const finalCustomers = savedCustomers.length > 0 ? savedCustomers : customers;
         const finalSuppliers = savedSuppliers.length > 0 ? savedSuppliers : suppliers;
-        console.log('AyarlarModal fetchAll - finalCustomers:', finalCustomers.length, 'finalSuppliers:', finalSuppliers.length);
+        const finalPosTerminals = savedPosTerminals.length > 0 ? savedPosTerminals : posTerminals;
+        console.log('AyarlarModal fetchAll - finalCustomers:', finalCustomers.length, 'finalSuppliers:', finalSuppliers.length, 'finalPosTerminals:', finalPosTerminals.length);
         setLocalCustomers(finalCustomers);
         setLocalSuppliers(finalSuppliers);
+        setLocalPosTerminals(finalPosTerminals);
         // Also update parent state if we loaded from localStorage
         if (savedCustomers.length > 0) {
           setCustomers(finalCustomers);
@@ -237,7 +255,9 @@ const AyarlarModal: React.FC<Props> = ({
         if (savedSuppliers.length > 0) {
           setSuppliers(finalSuppliers);
         }
-        setLocalPosTerminals(posTerminals);
+        if (savedPosTerminals.length > 0) {
+          setPosTerminals(finalPosTerminals);
+        }
         setBankFlags(flagsFromStorage);
         setGlobalForm(globalSettings);
 
@@ -523,7 +543,27 @@ const AyarlarModal: React.FC<Props> = ({
     value: string | number | boolean | null
   ) => {
     handleDirty();
-    setLocalCreditCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, [field]: value } : c)));
+    setLocalCreditCards((prev) => {
+      const updated = prev.map((c) => {
+        if (c.id === cardId) {
+          const updatedCard = { ...c, [field]: value };
+          // DEBUG: Log field change for debt fields
+          if (field === 'sonEkstreBorcu' || field === 'guncelBorc') {
+            console.log(`[BUG-1 DEBUG] handleCreditCardFieldChange - Card ${c.kartAdi} (${c.id}):`, {
+              field,
+              oldValue: c[field],
+              newValue: value,
+              valueType: typeof value,
+              updatedCard_sonEkstreBorcu: updatedCard.sonEkstreBorcu,
+              updatedCard_guncelBorc: updatedCard.guncelBorc
+            });
+          }
+          return updatedCard;
+        }
+        return c;
+      });
+      return updated;
+    });
   };
 
   const handleAddCreditCard = () => {
@@ -570,29 +610,57 @@ const AyarlarModal: React.FC<Props> = ({
   const handleSaveCreditCards = async () => {
     setLoading(true);
     try {
+      // DEBUG: Log localCreditCards state before mapping
+      console.log('[BUG-1 DEBUG] handleSaveCreditCards - localCreditCards state:', JSON.stringify(localCreditCards.map(c => ({
+        id: c.id,
+        name: c.kartAdi,
+        sonEkstreBorcu: c.sonEkstreBorcu,
+        guncelBorc: c.guncelBorc,
+        sonEkstreBorcu_type: typeof c.sonEkstreBorcu,
+        guncelBorc_type: typeof c.guncelBorc
+      })), null, 2));
+      
       const payload = localCreditCards.map((c) => {
         // Preserve user-entered values, even if 0 or null
         // sonEkstreBorcu: always send the value (0 is valid)
         // manualGuncelBorc: send null if not set, otherwise send the value (0 is valid)
-        return {
+        // CRITICAL: Check if value is explicitly set (not undefined/null) before converting
+        const sonEkstreBorcu = c.sonEkstreBorcu !== undefined && c.sonEkstreBorcu !== null 
+          ? (typeof c.sonEkstreBorcu === 'number' ? c.sonEkstreBorcu : Number(c.sonEkstreBorcu) || 0)
+          : 0;
+        const manualGuncelBorc = c.guncelBorc !== undefined && c.guncelBorc !== null
+          ? (typeof c.guncelBorc === 'number' ? c.guncelBorc : Number(c.guncelBorc) || null)
+          : null;
+        
+        const payloadItem = {
           id: c.id,
           name: c.kartAdi,
           bankId: c.bankaId || null,
           limit: c.limit ?? null,
           closingDay: c.hesapKesimGunu ?? null,
           dueDay: c.sonOdemeGunu ?? null,
-          sonEkstreBorcu: typeof c.sonEkstreBorcu === 'number' ? c.sonEkstreBorcu : 0,
-          manualGuncelBorc: typeof c.guncelBorc === 'number' ? c.guncelBorc : null,
+          sonEkstreBorcu,
+          manualGuncelBorc,
           isActive: c.aktifMi,
         };
+        
+        // DEBUG: Log payload item
+        console.log(`[BUG-1 DEBUG] handleSaveCreditCards - Payload for card ${c.kartAdi}:`, {
+          sonEkstreBorcu: payloadItem.sonEkstreBorcu,
+          manualGuncelBorc: payloadItem.manualGuncelBorc,
+          localState_sonEkstreBorcu: c.sonEkstreBorcu,
+          localState_guncelBorc: c.guncelBorc,
+          computed_sonEkstreBorcu: sonEkstreBorcu,
+          computed_manualGuncelBorc: manualGuncelBorc
+        });
+        
+        return payloadItem;
       });
 
-      // DEBUG: Log payload being sent
-      console.log('[BUG-1 DEBUG] handleSaveCreditCards - Payload being sent:', JSON.stringify(payload, null, 2));
-      payload.forEach((p, idx) => {
-        console.log(`[BUG-1 DEBUG] Card ${idx} (${p.name}): sonEkstreBorcu=${p.sonEkstreBorcu}, manualGuncelBorc=${p.manualGuncelBorc}`);
-      });
+      // DEBUG: Log full payload
+      console.log('[BUG-1 DEBUG] handleSaveCreditCards - Full payload:', JSON.stringify(payload, null, 2));
 
+      // BUG-1 FIX: Backend contract - must include sonEkstreBorcu and manualGuncelBorc
       const saved = await apiPost<
         Array<{
           id: string;
@@ -601,36 +669,42 @@ const AyarlarModal: React.FC<Props> = ({
           limit: number | null;
           closingDay: number | null;
           dueDay: number | null;
-          sonEkstreBorcu: number;
-          manualGuncelBorc: number | null;
+          sonEkstreBorcu: number; // REQUIRED: Last statement balance from DB
+          manualGuncelBorc: number | null; // REQUIRED: Manual current debt override
           isActive: boolean;
-          currentDebt: number;
-          availableLimit: number | null;
-          lastOperationDate: string | null;
+          currentDebt?: number; // Optional computed field
+          availableLimit?: number | null; // Optional computed field
+          lastOperationDate?: string | null;
           bank?: { id: string; name: string } | null;
         }>
       >('/api/credit-cards/bulk-save', payload);
 
       // DEBUG: Log backend response
-      console.log('[BUG-1 DEBUG] handleSaveCreditCards - Backend response:', JSON.stringify(saved, null, 2));
-      saved.forEach((c, idx) => {
-        console.log(`[BUG-1 DEBUG] Saved card ${idx} (${c.name}): sonEkstreBorcu=${c.sonEkstreBorcu}, manualGuncelBorc=${c.manualGuncelBorc}`);
-      });
+      console.log('[BUG-1 DEBUG] handleSaveCreditCards - Backend response:', JSON.stringify(saved.map(c => ({
+        id: c.id,
+        name: c.name,
+        sonEkstreBorcu: c.sonEkstreBorcu,
+        manualGuncelBorc: c.manualGuncelBorc
+      })), null, 2));
 
-      // Load and save credit card extras (only for asgariOran and maskeliKartNo)
+      // BUG-1 FIX: Load localStorage ONLY for UI helpers, NOT for debt values
       const cardExtras = loadCardExtrasFromStorage();
       
-      // CRITICAL: Use backend values directly - backend returns the saved values
-      // Don't use userEnteredValues map - backend is the source of truth after save
+      // BUG-1 FIX: Robust mapping with fallback - backend is authoritative source
       const mapped: CreditCard[] = saved.map((c) => {
-        const limit = c.limit;
-        const availableLimit = c.availableLimit;
-        const extras = cardExtras[c.id] || { sonEkstreBorcu: 0, asgariOran: 0.4, maskeliKartNo: '' };
+        const limit = c.limit ?? null;
+        const extras = cardExtras[c.id] || { asgariOran: 0.4, maskeliKartNo: '' };
         
-        // ALWAYS use backend values for sonEkstreBorcu and manualGuncelBorc
-        // Backend returns the saved values, so we should use them directly
-        const sonEkstreBorcu = c.sonEkstreBorcu !== undefined && c.sonEkstreBorcu !== null ? c.sonEkstreBorcu : 0;
-        const guncelBorc = c.manualGuncelBorc !== null && c.manualGuncelBorc !== undefined ? c.manualGuncelBorc : null;
+        // BUG-1 FIX: Debt values from backend with fallback
+        const sonEkstreBorcu = Number(c.sonEkstreBorcu ?? 0);
+        const guncelBorc = c.manualGuncelBorc !== null && c.manualGuncelBorc !== undefined 
+          ? Number(c.manualGuncelBorc) 
+          : (c.currentDebt !== undefined ? Number(c.currentDebt) : null);
+        
+        // kullanilabilirLimit: calculate from limit and guncelBorc
+        const kullanilabilirLimit = limit !== null && guncelBorc !== null 
+          ? limit - guncelBorc 
+          : (c.availableLimit ?? null);
 
         return {
           id: c.id,
@@ -638,11 +712,11 @@ const AyarlarModal: React.FC<Props> = ({
           kartAdi: c.name,
           kartLimit: limit,
           limit: limit,
-          kullanilabilirLimit: availableLimit,
-          asgariOran: extras.asgariOran,
+          kullanilabilirLimit: kullanilabilirLimit,
+          asgariOran: extras.asgariOran, // From localStorage (UI helper only)
           hesapKesimGunu: c.closingDay ?? 1,
           sonOdemeGunu: c.dueDay ?? 1,
-          maskeliKartNo: extras.maskeliKartNo,
+          maskeliKartNo: extras.maskeliKartNo, // From localStorage (UI helper only)
           aktifMi: c.isActive,
           sonEkstreBorcu, // ALWAYS from backend
           guncelBorc, // ALWAYS from backend
@@ -819,6 +893,24 @@ const AyarlarModal: React.FC<Props> = ({
     }
   };
 
+  // POS handlers
+  const handleSavePos = async () => {
+    setLoading(true);
+    try {
+      // Save to localStorage (no backend endpoint yet)
+      savePosTerminalsToStorage(localPosTerminals);
+      setPosTerminals(localPosTerminals);
+      setDirty(false);
+      alert('POS terminalleri başarıyla kaydedildi.');
+    } catch (error: any) {
+      console.error('POS save error:', error);
+      const errorMessage = error?.message || 'POS terminalleri kaydedilirken bir hata oluştu.';
+      alert(`Hata: ${errorMessage}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Global settings handler
   const handleSaveGlobal = async () => {
     setLoading(true);
@@ -937,6 +1029,8 @@ const AyarlarModal: React.FC<Props> = ({
                 banks={localBanks}
                 onSetTerminals={setLocalPosTerminals}
                 onDirty={handleDirty}
+                onSave={handleSavePos}
+                loading={loading}
               />
             )}
             {activeTab === 'MUSTERI' && (

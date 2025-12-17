@@ -9,9 +9,11 @@ interface Props {
   banks: BankMaster[];
   onSetTerminals: (terminals: PosTerminal[]) => void;
   onDirty: () => void;
+  onSave: () => void;
+  loading?: boolean;
 }
 
-const PosTab: React.FC<Props> = ({ terminals, banks, onSetTerminals, onDirty }) => {
+const PosTab: React.FC<Props> = ({ terminals, banks, onSetTerminals, onDirty, onSave, loading = false }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ bankaId: '', posAdi: '', komisyonOrani: 0.02, aktifMi: true });
 
@@ -144,9 +146,12 @@ const PosTab: React.FC<Props> = ({ terminals, banks, onSetTerminals, onDirty }) 
             <span>Aktif</span>
           </label>
 
-          <div className="flex justify-end pt-2">
-            <button className="btn btn-primary" onClick={handleSave}>
-              Kaydet
+          <div className="flex justify-end pt-2 gap-2">
+            <button className="btn btn-primary" onClick={handleSave} disabled={loading}>
+              {editingId ? 'Güncelle' : 'Ekle'}
+            </button>
+            <button className="btn btn-secondary" onClick={onSave} disabled={loading}>
+              {loading ? 'Kaydediliyor...' : 'Tümünü Kaydet'}
             </button>
           </div>
         </div>

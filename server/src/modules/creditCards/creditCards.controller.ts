@@ -123,7 +123,9 @@ export async function createPayment(req: Request, res: Response): Promise<void> 
 export async function bulkSave(req: Request, res: Response): Promise<void> {
   try {
     const rawPayload = bulkSaveCreditCardSchema.parse(req.body);
+    
     // Normalize undefined to null for optional fields
+    // CRITICAL FIX: Include sonEkstreBorcu and manualGuncelBorc in payload
     const payload = rawPayload.map((item) => ({
       id: item.id,
       name: item.name,
@@ -131,8 +133,11 @@ export async function bulkSave(req: Request, res: Response): Promise<void> {
       limit: item.limit ?? null,
       closingDay: item.closingDay ?? null,
       dueDay: item.dueDay ?? null,
+      sonEkstreBorcu: item.sonEkstreBorcu, // Include this field (can be 0, number, or undefined)
+      manualGuncelBorc: item.manualGuncelBorc ?? null, // Include this field (can be null, number, or undefined)
       isActive: item.isActive ?? true,
     }));
+    
     const userId = getUserId(req);
     const cards = await creditCardsService.bulkSaveCreditCards(payload, userId);
     res.json(cards);

@@ -94,6 +94,25 @@ export interface ExpenseResponse {
     description: string | null;
     displayOutgoing: number | null;
   };
+  // CRITICAL FIX: Include updated credit card in response
+  creditCard: {
+    id: string;
+    name: string;
+    bankId: string | null;
+    limit: number | null;
+    closingDay: number | null;
+    dueDay: number | null;
+    sonEkstreBorcu: number;
+    manualGuncelBorc: number | null;
+    isActive: boolean;
+    currentDebt: number;
+    availableLimit: number | null;
+    lastOperationDate: string | null;
+    bank: {
+      id: string;
+      name: string;
+    } | null;
+  };
 }
 
 export interface PaymentResponse {

@@ -184,6 +184,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     const fetchCreditCards = async () => {
       try {
         console.log('Loading credit cards from backend...');
+        // BUG-1 FIX: Backend contract - must include sonEkstreBorcu and manualGuncelBorc
         const backendCreditCards = await apiGet<Array<{
           id: string;
           name: string;
@@ -191,43 +192,54 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           limit: number | null;
           closingDay: number | null;
           dueDay: number | null;
+          sonEkstreBorcu: number; // REQUIRED: Last statement balance from DB
+          manualGuncelBorc: number | null; // REQUIRED: Manual current debt override (null = calculate from operations)
           isActive: boolean;
-          currentDebt: number;
-          availableLimit: number | null;
-          lastOperationDate: string | null;
+          currentDebt?: number; // Optional computed field
+          availableLimit?: number | null; // Optional computed field
+          lastOperationDate?: string | null;
         }>>('/api/credit-cards');
 
         console.log('Backend credit cards received:', backendCreditCards);
 
-        // Fix: Load credit card extras (sonEkstreBorcu, asgariOran, maskeliKartNo) from localStorage
+        // BUG-1 FIX: localStorage ONLY for UI helpers (maskeliKartNo, asgariOran), NOT for debt values
         const cardExtrasKey = 'esca-webkasa-card-extras';
         const savedExtras = localStorage.getItem(cardExtrasKey);
-        const cardExtras: Record<string, { sonEkstreBorcu: number; asgariOran: number; maskeliKartNo: string }> = savedExtras ? JSON.parse(savedExtras) : {};
+        const cardExtras: Record<string, { sonEkstreBorcu?: number; asgariOran: number; maskeliKartNo: string }> = savedExtras ? JSON.parse(savedExtras) : {};
         
+        // BUG-1 FIX: Robust mapping with fallback - backend is authoritative source
         const mappedCreditCards: CreditCard[] = backendCreditCards.map((card) => {
-          // Fix Bug 6: Preserve null limits from backend (don't convert to 0)
-          // If limit is null, it means it's not set, so keep it as null
-          // If limit is set (e.g., 250000), use that value
-          const limit = card.limit; // Preserve null if not set
-          const availableLimit = card.availableLimit; // Preserve null if limit is not set
-          const extras = cardExtras[card.id] || { sonEkstreBorcu: 0, asgariOran: 0.4, maskeliKartNo: '' };
+          const limit = card.limit ?? null;
+          const extras = cardExtras[card.id] || { asgariOran: 0.4, maskeliKartNo: '' };
+          
+          // BUG-1 FIX: Debt values from backend with fallback
+          // sonEkstreBorcu: backend value or 0
+          const sonEkstreBorcu = Number(card.sonEkstreBorcu ?? 0);
+          
+          // guncelBorc: manualGuncelBorc (backend) or currentDebt (computed) or null
+          const guncelBorc = card.manualGuncelBorc !== null && card.manualGuncelBorc !== undefined 
+            ? Number(card.manualGuncelBorc) 
+            : (card.currentDebt !== undefined ? Number(card.currentDebt) : null);
+          
+          // kullanilabilirLimit: calculate from limit and guncelBorc
+          const kullanilabilirLimit = limit !== null && guncelBorc !== null 
+            ? limit - guncelBorc 
+            : (card.availableLimit ?? null);
 
-          // CRITICAL: Use backend values for sonEkstreBorcu and guncelBorc, NOT localStorage
-          // localStorage is only used for asgariOran and maskeliKartNo
           return {
             id: card.id,
             bankaId: card.bankId || '',
             kartAdi: card.name,
-            kartLimit: limit, // Use backend limit (can be null)
-            limit: limit, // Use backend limit (can be null)
-            kullanilabilirLimit: availableLimit, // Use backend availableLimit (can be null)
-            asgariOran: extras.asgariOran, // From localStorage
+            kartLimit: limit,
+            limit: limit,
+            kullanilabilirLimit: kullanilabilirLimit,
+            asgariOran: extras.asgariOran, // From localStorage (UI helper only)
             hesapKesimGunu: card.closingDay ?? 1,
             sonOdemeGunu: card.dueDay ?? 1,
-            maskeliKartNo: extras.maskeliKartNo, // From localStorage
+            maskeliKartNo: extras.maskeliKartNo, // From localStorage (UI helper only)
             aktifMi: card.isActive,
-            sonEkstreBorcu: card.sonEkstreBorcu !== undefined && card.sonEkstreBorcu !== null ? card.sonEkstreBorcu : 0, // ALWAYS from backend
-            guncelBorc: card.manualGuncelBorc !== null && card.manualGuncelBorc !== undefined ? card.manualGuncelBorc : null, // ALWAYS from backend
+            sonEkstreBorcu, // From backend (authoritative)
+            guncelBorc, // From backend (authoritative)
           };
         });
 
@@ -400,12 +412,13 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             outgoing: Number(tx.outgoing) ?? 0,
             balanceAfter: Number(tx.balanceAfter) ?? 0,
             bankId: tx.bankId || undefined,
-            bankDelta: tx.bankDelta || undefined,
+            bankDelta: tx.bankDelta !== undefined && tx.bankDelta !== null ? Number(tx.bankDelta) : undefined, // CRITICAL FIX: Preserve bankDelta including negative values (0 is falsy!)
             displayIncoming: tx.displayIncoming || undefined,
             displayOutgoing: tx.displayOutgoing || undefined,
             createdAtIso: tx.createdAt,
             createdBy: tx.createdBy,
           }));
+          
           const sorted = [...mapped].sort((a, b) => {
             const aCreated = a.createdAtIso || a.isoDate + 'T00:00:00';
             const bCreated = b.createdAtIso || b.isoDate + 'T00:00:00';
@@ -472,31 +485,16 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     fetchTodaysTransactions();
   }, []);
 
-  // Ref to prevent useEffect from overwriting manual updates
-  const manualUpdateRef = useRef(false);
-  // Ref to track last manual update timestamp to prevent stale useEffect runs
-  const lastManualUpdateRef = useRef<number>(0);
-
-  useEffect(() => {
-    // Skip if this is a manual update (we'll handle it separately)
-    // Also skip if a manual update happened very recently (within 500ms)
-    const now = Date.now();
-    if (manualUpdateRef.current || (now - lastManualUpdateRef.current < 500)) {
-      if (manualUpdateRef.current) {
-        manualUpdateRef.current = false;
-      }
-      return;
-    }
-
-    const fetchUpcomingPayments = async () => {
+  // BUG-2 FIX: Single source of truth - buildUpcomingPayments derives from state
+  // No ref hacks, no manual patches - just pure derivation
+  const buildUpcomingPayments = useMemo(() => {
     const payments: UpcomingPayment[] = [];
     const today = todayIso();
 
-      // Fix Bug 7: Show all credit cards with debt, not just those with krediKartiVarMi flag
+    // Credit cards with debt
     creditCards
       .filter((c) => c.aktifMi && (c.sonEkstreBorcu > 0 || (c.guncelBorc !== null && c.guncelBorc !== undefined && c.guncelBorc > 0)))
       .forEach((card) => {
-        // Use sonEkstreBorcu if > 0, otherwise use guncelBorc
         const amount = card.sonEkstreBorcu > 0 ? card.sonEkstreBorcu : (card.guncelBorc || 0);
         const { dueIso, dueDisplay, daysLeft } = getCreditCardNextDue(card);
         payments.push({
@@ -511,8 +509,9 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         });
       });
 
+    // Cheques
     cheques
-        .filter((c) => c.direction === 'BORC') // Only our issued cheques (BORC) appear in upcoming payments
+      .filter((c) => c.direction === 'BORC')
       .filter((c) => ['KASADA', 'BANKADA_TAHSILDE', 'ODEMEDE'].includes(c.status))
       .forEach((cek) => {
         payments.push({
@@ -527,18 +526,17 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         });
       });
 
-    // Add loan installments to upcoming payments - only the next upcoming installment per loan
+    // BUG-2 FIX: Loans - only unpaid installments (status != ODEME_ALINDI)
     loans
       .filter((loan) => loan.isActive && loan.installments && loan.installments.length > 0)
       .forEach((loan) => {
-        // Find upcoming installments (status = BEKLENIYOR or GECIKMIS)
+        // Find upcoming installments: status = BEKLENIYOR or GECIKMIS (exclude ODEME_ALINDI)
         const upcomingInstallments = loan.installments!.filter(
           (inst) => inst.status === 'BEKLENIYOR' || inst.status === 'GECIKMIS'
         );
         
         // Only show the next upcoming installment (earliest due date)
         if (upcomingInstallments.length > 0) {
-          // Sort by due date and take the first one (earliest)
           const nextInstallment = [...upcomingInstallments].sort((a, b) => 
             a.dueDate.localeCompare(b.dueDate)
           )[0];
@@ -557,28 +555,55 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       });
 
     payments.sort((a, b) => a.daysLeft - b.daysLeft);
-    setUpcomingPayments(payments);
-    };
+    return payments;
+  }, [banks, creditCards, cheques, loans]); // Derived from state - automatically updates when state changes
 
-    fetchUpcomingPayments();
-  }, [banks, creditCards, cheques, loans, dailyTransactions.length]); // Refresh when transactions change
+  // BUG-2 FIX: Update upcomingPayments state when buildUpcomingPayments changes
+  useEffect(() => {
+    setUpcomingPayments(buildUpcomingPayments);
+  }, [buildUpcomingPayments]);
 
+  // BUG-A FIX: Use backend summary as single source of truth for bank balances
+  // Backend calculates bankDelta sum correctly (including POS_KOMISYONU negative values)
+  // Frontend client-side calculation can miss transactions or have race conditions
   const bankDeltasById = useMemo(() => {
+    // If we have backend summary, use it as authoritative source
+    if (summary?.bankBalances) {
+      const map: Record<string, number> = {};
+      summary.bankBalances.forEach((bb) => {
+        map[bb.bankId] = bb.balance; // This is already the sum of all bankDelta for this bank
+      });
+      return map;
+    }
+    
+    // Fallback: Calculate from dailyTransactions if summary not available
+    // This should only happen during initial load or if backend is down
     return dailyTransactions.reduce((map, tx) => {
-      if (tx.bankId && tx.bankDelta) {
+      if (tx.bankId && tx.bankDelta !== undefined && tx.bankDelta !== null) {
         map[tx.bankId] = (map[tx.bankId] || 0) + tx.bankDelta;
       }
       return map;
     }, {} as Record<string, number>);
-  }, [dailyTransactions]);
+  }, [summary?.bankBalances, dailyTransactions]);
 
-  const totalBanksBalance = useMemo(
-    () =>
-      banks
+  // BUG-A FIX: Use backend summary totalBankBalance as single source of truth
+  // This ensures POS_KOMISYONU and all other bankDelta transactions are correctly included
+  const totalBanksBalance = useMemo(() => {
+    // If we have backend summary, use its totalBankBalance (authoritative)
+    if (summary?.totalBankBalance !== undefined) {
+      // Backend totalBankBalance is sum of bankDelta only (doesn't include opening balances)
+      // We need to add opening balances from frontend banks state
+      const openingBalancesSum = banks
         .filter((b) => b.aktifMi)
-        .reduce((sum, b) => sum + (b.acilisBakiyesi || 0) + (bankDeltasById[b.id] || 0), 0),
-    [banks, bankDeltasById]
-  );
+        .reduce((sum, b) => sum + (b.acilisBakiyesi || 0), 0);
+      return summary.totalBankBalance + openingBalancesSum;
+    }
+    
+    // Fallback: Calculate from banks + bankDeltasById if summary not available
+    return banks
+      .filter((b) => b.aktifMi)
+      .reduce((sum, b) => sum + (b.acilisBakiyesi || 0) + (bankDeltasById[b.id] || 0), 0);
+  }, [summary?.totalBankBalance, banks, bankDeltasById]);
 
   // Cash balance from authoritative backend summary (not client-side calculation)
   const cashBalance = summary?.cashBalance ?? BASE_CASH_BALANCE;
@@ -1252,106 +1277,16 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             description: values.aciklama || null,
           });
 
-          // Reload loans to get updated installment status FIRST
+          // BUG-B FIX: Update loans state FIRST (before refreshAll) to ensure upcoming payments update immediately
+          // The response.loan already contains updated installment status from backend
+          // But we need to fetch all loans to get complete state
           const updatedLoans = await apiGet<Loan[]>('/api/loans');
           
-          // DEBUG: Log updated loans
-          console.log('[BUG-2 DEBUG] handleBankaNakitCikisSaved - Updated loans from API:', JSON.stringify(updatedLoans.map(l => ({
-            id: l.id,
-            name: l.name,
-            installments: l.installments?.map(inst => ({
-              installmentNumber: inst.installmentNumber,
-              status: inst.status,
-              dueDate: inst.dueDate
-            }))
-          })), null, 2));
-          
-          // Refresh summary and transactions after successful save
-          await refreshAll();
-          
-          // Mark as manual update to prevent useEffect from overwriting
-          manualUpdateRef.current = true;
-          lastManualUpdateRef.current = Date.now();
-          
-          // Update loans state AFTER refreshAll to ensure upcoming payments uses updated data
+          // CRITICAL: Update loans state immediately so buildUpcomingPayments recalculates
           setLoans(updatedLoans);
           
-          // Manually trigger upcoming payments refresh after loans are updated
-          // This ensures the paid installment is removed and next one is shown
-          // IMPORTANT: Use updatedLoans directly, not the loans state (which may be stale)
-          const payments: UpcomingPayment[] = [];
-          const today = todayIso();
-          
-          // Credit cards
-          creditCards
-            .filter((c) => c.aktifMi && (c.sonEkstreBorcu > 0 || (c.guncelBorc !== null && c.guncelBorc !== undefined && c.guncelBorc > 0)))
-            .forEach((card) => {
-              const amount = card.sonEkstreBorcu > 0 ? card.sonEkstreBorcu : (card.guncelBorc || 0);
-              const { dueIso, dueDisplay, daysLeft } = getCreditCardNextDue(card);
-              payments.push({
-                id: `cc-${card.id}`,
-                category: 'KREDI_KARTI',
-                bankName: banks.find((b) => b.id === card.bankaId)?.bankaAdi || '-',
-                name: card.kartAdi,
-                dueDateIso: dueIso,
-                dueDateDisplay: dueDisplay,
-                amount,
-                daysLeft,
-              });
-            });
-          
-          // Cheques
-          cheques
-            .filter((c) => c.direction === 'BORC')
-            .filter((c) => ['KASADA', 'BANKADA_TAHSILDE', 'ODEMEDE'].includes(c.status))
-            .forEach((cek) => {
-              payments.push({
-                id: `cek-${cek.id}`,
-                category: 'CEK',
-                bankName: cek.bankaAdi || '-',
-                name: cek.lehtar,
-                dueDateIso: cek.vadeTarihi,
-                dueDateDisplay: isoToDisplay(cek.vadeTarihi),
-                amount: cek.tutar,
-                daysLeft: diffInDays(today, cek.vadeTarihi),
-              });
-            });
-          
-          // Loans - only show next upcoming installment (exclude paid ones)
-          // CRITICAL: Use updatedLoans directly, not loans state (which may be stale)
-          updatedLoans
-            .filter((loan) => loan.isActive && loan.installments && loan.installments.length > 0)
-            .forEach((loan) => {
-              // Find upcoming installments (status = BEKLENIYOR or GECIKMIS) - exclude ODEME_ALINDI
-              const upcomingInstallments = loan.installments!.filter(
-                (inst) => inst.status === 'BEKLENIYOR' || inst.status === 'GECIKMIS'
-              );
-              
-              // Only show the next upcoming installment (earliest due date)
-              if (upcomingInstallments.length > 0) {
-                const nextInstallment = [...upcomingInstallments].sort((a, b) => 
-                  a.dueDate.localeCompare(b.dueDate)
-                )[0];
-                
-                payments.push({
-                  id: `loan-${loan.id}-${nextInstallment.installmentNumber}`,
-                  category: 'KREDI',
-                  bankName: loan.bank?.name || '-',
-                  name: loan.name,
-                  dueDateIso: nextInstallment.dueDate,
-                  dueDateDisplay: isoToDisplay(nextInstallment.dueDate),
-                  amount: nextInstallment.totalAmount,
-                  daysLeft: diffInDays(today, nextInstallment.dueDate),
-                });
-              }
-            });
-          
-          payments.sort((a, b) => a.daysLeft - b.daysLeft);
-          
-          // DEBUG: Log final upcoming payments
-          console.log('[BUG-2 DEBUG] handleBankaNakitCikisSaved - Final upcoming payments:', JSON.stringify(payments, null, 2));
-          
-          setUpcomingPayments(payments);
+          // Then refresh summary and transactions
+          await refreshAll();
           
           setOpenForm(null);
           return;
@@ -1521,7 +1456,24 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       });
 
       // Fix: POS commission transaction - outgoing=commissionAmount, bankDelta=-commissionAmount
-      const komisyonResponse = await apiPost<{
+      let komisyonResponse;
+      try {
+        const komisyonPayload = {
+          isoDate: values.islemTarihiIso,
+          documentNo: `${documentNo}-KOM`,
+          type: 'POS_KOMISYONU',
+          source: 'POS',
+          counterparty,
+          description: values.aciklama || 'POS Komisyonu',
+          incoming: 0,
+          outgoing: 0,
+          bankDelta: -values.komisyonTutar,
+          bankId: values.bankaId,
+          displayIncoming: null,
+          displayOutgoing: values.komisyonTutar,
+        };
+        
+        komisyonResponse = await apiPost<{
         id: string;
         isoDate: string;
         documentNo: string | null;
@@ -1537,19 +1489,14 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         displayOutgoing: number | null;
         createdAt: string;
         createdBy: string;
-      }>('/api/transactions', {
-      isoDate: values.islemTarihiIso,
-      documentNo: `${documentNo}-KOM`,
-      type: 'POS_KOMISYONU',
-      source: 'POS',
-      counterparty,
-      description: values.aciklama || 'POS Komisyonu',
-      incoming: 0,
-        outgoing: 0, // Backend will normalize based on transaction type
-        bankDelta: -values.komisyonTutar, // Commission reduces bank balance
-      bankId: values.bankaId,
-      displayOutgoing: values.komisyonTutar,
-      });
+      }>('/api/transactions', komisyonPayload);
+      
+      } catch (komisyonError: any) {
+        // Don't throw - continue with brut transaction only, but log the error
+        console.error('Komisyon transaction kaydedilemedi:', komisyonError);
+        alert(`Komisyon transaction'ı kaydedilemedi: ${komisyonError?.message || 'Bilinmeyen hata'}. Brüt transaction kaydedildi.`);
+        komisyonResponse = null;
+      }
 
       // Map backend responses to frontend format
       const brutTx: DailyTransaction = {
@@ -1571,26 +1518,41 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         createdBy: brutResponse.createdBy,
       };
 
-      const komisyonTx: DailyTransaction = {
-        id: komisyonResponse.id,
-        isoDate: komisyonResponse.isoDate,
-        displayDate: isoToDisplay(komisyonResponse.isoDate),
-        documentNo: komisyonResponse.documentNo || '',
-        type: komisyonResponse.type,
-        source: komisyonResponse.source,
-        counterparty: komisyonResponse.counterparty || '',
-        description: komisyonResponse.description || '',
-        incoming: komisyonResponse.incoming,
-        outgoing: komisyonResponse.outgoing,
-        balanceAfter: komisyonResponse.balanceAfter,
-        bankId: komisyonResponse.bankId || undefined,
-        bankDelta: komisyonResponse.bankDelta || undefined,
+      // CRITICAL FIX: Add both transactions to the list (brut and commission)
+      // Previously only brutTx was added, causing commission bankDelta to be ignored
+      if (komisyonResponse) {
+        const komisyonTx: DailyTransaction = {
+          id: komisyonResponse.id,
+          isoDate: komisyonResponse.isoDate,
+          displayDate: isoToDisplay(komisyonResponse.isoDate),
+          documentNo: komisyonResponse.documentNo || '',
+          type: komisyonResponse.type,
+          source: komisyonResponse.source,
+          counterparty: komisyonResponse.counterparty || '',
+          description: komisyonResponse.description || '',
+          incoming: komisyonResponse.incoming,
+          outgoing: komisyonResponse.outgoing,
+          balanceAfter: komisyonResponse.balanceAfter,
+          bankId: komisyonResponse.bankId || undefined,
+        // CRITICAL FIX: Preserve negative bankDelta values (commission reduces bank balance)
+        // Use !== undefined check instead of || to preserve negative values
+        bankDelta: komisyonResponse.bankDelta !== undefined && komisyonResponse.bankDelta !== null 
+          ? komisyonResponse.bankDelta 
+          : undefined,
         displayOutgoing: komisyonResponse.displayOutgoing || undefined,
         createdAtIso: komisyonResponse.createdAt,
         createdBy: komisyonResponse.createdBy,
       };
 
+        addTransactions([brutTx, komisyonTx]);
+      } else {
+        // Only add brut transaction if commission failed
+        addTransactions([brutTx]);
+      }
+
     // Refresh summary and transactions after successful save
+    // NOTE: refreshAll() will fetch transactions from backend, which should include both brut and commission
+    // The bankDelta mapping fix ensures negative values (commission) are preserved
     await refreshAll();
     
     setOpenForm(null);
@@ -1622,9 +1584,28 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           source: string;
           displayOutgoing: number | null;
         };
+        // CRITICAL FIX: Response now includes updated credit card
+        creditCard: {
+          id: string;
+          name: string;
+          bankId: string | null;
+          limit: number | null;
+          closingDay: number | null;
+          dueDay: number | null;
+          sonEkstreBorcu: number;
+          manualGuncelBorc: number | null;
+          isActive: boolean;
+          currentDebt: number;
+          availableLimit: number | null;
+          lastOperationDate: string | null;
+          bank: {
+            id: string;
+            name: string;
+          } | null;
+        };
       }>('/api/credit-cards/expense', {
         creditCardId: values.cardId,
-      isoDate: values.islemTarihiIso,
+        isoDate: values.islemTarihiIso,
         amount: values.tutar,
         description: values.aciklama || null,
         counterparty: values.muhatap || `${supplier.kod} - ${supplier.ad}` || null,
@@ -1635,67 +1616,55 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         id: response.transaction.id,
         isoDate: response.transaction.isoDate,
         displayDate: isoToDisplay(response.transaction.isoDate),
-      documentNo: `KK-TED-${Date.now()}`,
+        documentNo: `KK-TED-${Date.now()}`,
         type: response.transaction.type as DailyTransactionType,
         source: response.transaction.source as DailyTransactionSource,
-      counterparty: values.muhatap || `${supplier.kod} - ${supplier.ad}`,
-      description: values.aciklama || '',
-      incoming: 0,
-      outgoing: 0,
+        counterparty: values.muhatap || `${supplier.kod} - ${supplier.ad}`,
+        description: values.aciklama || '',
+        incoming: 0,
+        outgoing: 0,
         balanceAfter: 0, // Will be recalculated
-      bankDelta: 0,
+        bankDelta: 0,
         displayOutgoing: response.transaction.displayOutgoing || undefined,
         createdAtIso: new Date().toISOString(),
-      createdBy: currentUser.email,
-    };
+        createdBy: currentUser.email,
+      };
 
-    addTransactions([tx]);
+      addTransactions([tx]);
       
-      // BUG 6 FIX: Re-fetch credit cards to update currentDebt after expense
-      try {
-        const backendCreditCards = await apiGet<Array<{
-          id: string;
-          name: string;
-          bankId: string | null;
-          limit: number | null;
-          closingDay: number | null;
-          dueDay: number | null;
-          isActive: boolean;
-          currentDebt: number;
-          availableLimit: number | null;
-          lastOperationDate: string | null;
-        }>>('/api/credit-cards');
-        
-        const cardExtrasKey = 'esca-webkasa-card-extras';
-        const savedExtras = localStorage.getItem(cardExtrasKey);
-        const cardExtras: Record<string, { sonEkstreBorcu: number; asgariOran: number; maskeliKartNo: string }> = savedExtras ? JSON.parse(savedExtras) : {};
-        
-        const mappedCreditCards: CreditCard[] = backendCreditCards.map((card) => {
-          const limit = card.limit;
-          const availableLimit = card.availableLimit;
-          const extras = cardExtras[card.id] || { sonEkstreBorcu: 0, asgariOran: 0.4, maskeliKartNo: '' };
-          
-          return {
-            id: card.id,
-            bankaId: card.bankId || '',
-            kartAdi: card.name,
-            kartLimit: limit,
-            limit: limit,
-            kullanilabilirLimit: availableLimit,
-            asgariOran: extras.asgariOran,
-            hesapKesimGunu: card.closingDay ?? 1,
-            sonOdemeGunu: card.dueDay ?? 1,
-            maskeliKartNo: extras.maskeliKartNo,
-            aktifMi: card.isActive,
-            sonEkstreBorcu: card.sonEkstreBorcu ?? 0, // Use from backend
-            guncelBorc: card.currentDebt, // BUG 6 FIX: Use updated currentDebt from backend
-          };
-        });
-        
-        setCreditCards(mappedCreditCards);
-      } catch (refreshError) {
-        console.error('Failed to refresh credit cards after expense:', refreshError);
-      }
+      // CRITICAL FIX: Update credit card state from response (single source of truth: backend)
+      const cardExtrasKey = 'esca-webkasa-card-extras';
+      const savedExtras = localStorage.getItem(cardExtrasKey);
+      const cardExtras: Record<string, { sonEkstreBorcu: number; asgariOran: number; maskeliKartNo: string }> = savedExtras ? JSON.parse(savedExtras) : {};
+      
+      // Update the specific card that was modified
+      const updatedCard: CreditCard = {
+        id: response.creditCard.id,
+        bankaId: response.creditCard.bankId || '',
+        kartAdi: response.creditCard.name,
+        kartLimit: response.creditCard.limit,
+        limit: response.creditCard.limit,
+        kullanilabilirLimit: response.creditCard.availableLimit,
+        asgariOran: cardExtras[response.creditCard.id]?.asgariOran || 0.4,
+        hesapKesimGunu: response.creditCard.closingDay ?? 1,
+        sonOdemeGunu: response.creditCard.dueDay ?? 1,
+        maskeliKartNo: cardExtras[response.creditCard.id]?.maskeliKartNo || '',
+        aktifMi: response.creditCard.isActive,
+        sonEkstreBorcu: response.creditCard.sonEkstreBorcu, // Use from backend response
+        guncelBorc: response.creditCard.currentDebt, // Use from backend response
+      };
+      
+      // Update credit cards state: replace the updated card
+      setCreditCards((prevCards) => {
+        const index = prevCards.findIndex((c) => c.id === updatedCard.id);
+        if (index >= 0) {
+          const newCards = [...prevCards];
+          newCards[index] = updatedCard;
+          return newCards;
+        }
+        // If card not found, add it (shouldn't happen, but safe fallback)
+        return [...prevCards, updatedCard];
+      });
       
       // Refresh summary and transactions after successful save
       await refreshAll();
@@ -1708,13 +1677,13 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
 
   const handleKrediKartiMasrafSaved = async (values: KrediKartiMasrafFormValues) => {
     try {
-    const meta =
-      values.masrafTuru === 'AKARYAKIT'
-        ? values.plaka
-        : values.masrafTuru === 'FATURA'
-        ? values.faturaAltTuru
-        : undefined;
-    const counterparty = values.aciklama || meta || values.masrafTuru;
+      const meta =
+        values.masrafTuru === 'AKARYAKIT'
+          ? values.plaka
+          : values.masrafTuru === 'FATURA'
+          ? values.faturaAltTuru
+          : undefined;
+      const counterparty = values.aciklama || meta || values.masrafTuru;
 
       const response = await apiPost<{
         operation: {
@@ -1731,9 +1700,28 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           source: string;
           displayOutgoing: number | null;
         };
+        // CRITICAL FIX: Response now includes updated credit card
+        creditCard: {
+          id: string;
+          name: string;
+          bankId: string | null;
+          limit: number | null;
+          closingDay: number | null;
+          dueDay: number | null;
+          sonEkstreBorcu: number;
+          manualGuncelBorc: number | null;
+          isActive: boolean;
+          currentDebt: number;
+          availableLimit: number | null;
+          lastOperationDate: string | null;
+          bank: {
+            id: string;
+            name: string;
+          } | null;
+        };
       }>('/api/credit-cards/expense', {
         creditCardId: values.cardId,
-      isoDate: values.islemTarihiIso,
+        isoDate: values.islemTarihiIso,
         amount: values.tutar,
         description: values.aciklama || null,
         counterparty: counterparty || 'Masraf' || null,
@@ -1744,67 +1732,55 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         id: response.transaction.id,
         isoDate: response.transaction.isoDate,
         displayDate: isoToDisplay(response.transaction.isoDate),
-      documentNo: `KK-MSF-${Date.now()}`,
+        documentNo: `KK-MSF-${Date.now()}`,
         type: response.transaction.type as DailyTransactionType,
         source: response.transaction.source as DailyTransactionSource,
-      counterparty: counterparty || 'Masraf',
-      description: values.aciklama || '',
-      incoming: 0,
-      outgoing: 0,
+        counterparty: counterparty || 'Masraf',
+        description: values.aciklama || '',
+        incoming: 0,
+        outgoing: 0,
         balanceAfter: 0, // Will be recalculated
-      bankDelta: 0,
+        bankDelta: 0,
         displayOutgoing: response.transaction.displayOutgoing || undefined,
         createdAtIso: new Date().toISOString(),
-      createdBy: currentUser.email,
-    };
+        createdBy: currentUser.email,
+      };
 
-    addTransactions([tx]);
+      addTransactions([tx]);
       
-      // BUG 6 FIX: Re-fetch credit cards to update currentDebt after expense
-      try {
-        const backendCreditCards = await apiGet<Array<{
-          id: string;
-          name: string;
-          bankId: string | null;
-          limit: number | null;
-          closingDay: number | null;
-          dueDay: number | null;
-          isActive: boolean;
-          currentDebt: number;
-          availableLimit: number | null;
-          lastOperationDate: string | null;
-        }>>('/api/credit-cards');
-        
-        const cardExtrasKey = 'esca-webkasa-card-extras';
-        const savedExtras = localStorage.getItem(cardExtrasKey);
-        const cardExtras: Record<string, { sonEkstreBorcu: number; asgariOran: number; maskeliKartNo: string }> = savedExtras ? JSON.parse(savedExtras) : {};
-        
-        const mappedCreditCards: CreditCard[] = backendCreditCards.map((card) => {
-          const limit = card.limit;
-          const availableLimit = card.availableLimit;
-          const extras = cardExtras[card.id] || { sonEkstreBorcu: 0, asgariOran: 0.4, maskeliKartNo: '' };
-          
-          return {
-            id: card.id,
-            bankaId: card.bankId || '',
-            kartAdi: card.name,
-            kartLimit: limit,
-            limit: limit,
-            kullanilabilirLimit: availableLimit,
-            asgariOran: extras.asgariOran,
-            hesapKesimGunu: card.closingDay ?? 1,
-            sonOdemeGunu: card.dueDay ?? 1,
-            maskeliKartNo: extras.maskeliKartNo,
-            aktifMi: card.isActive,
-            sonEkstreBorcu: card.sonEkstreBorcu ?? 0, // Use from backend
-            guncelBorc: card.currentDebt, // BUG 6 FIX: Use updated currentDebt from backend
-          };
-        });
-        
-        setCreditCards(mappedCreditCards);
-      } catch (refreshError) {
-        console.error('Failed to refresh credit cards after expense:', refreshError);
-      }
+      // CRITICAL FIX: Update credit card state from response (single source of truth: backend)
+      const cardExtrasKey = 'esca-webkasa-card-extras';
+      const savedExtras = localStorage.getItem(cardExtrasKey);
+      const cardExtras: Record<string, { sonEkstreBorcu: number; asgariOran: number; maskeliKartNo: string }> = savedExtras ? JSON.parse(savedExtras) : {};
+      
+      // Update the specific card that was modified
+      const updatedCard: CreditCard = {
+        id: response.creditCard.id,
+        bankaId: response.creditCard.bankId || '',
+        kartAdi: response.creditCard.name,
+        kartLimit: response.creditCard.limit,
+        limit: response.creditCard.limit,
+        kullanilabilirLimit: response.creditCard.availableLimit,
+        asgariOran: cardExtras[response.creditCard.id]?.asgariOran || 0.4,
+        hesapKesimGunu: response.creditCard.closingDay ?? 1,
+        sonOdemeGunu: response.creditCard.dueDay ?? 1,
+        maskeliKartNo: cardExtras[response.creditCard.id]?.maskeliKartNo || '',
+        aktifMi: response.creditCard.isActive,
+        sonEkstreBorcu: response.creditCard.sonEkstreBorcu, // Use from backend response
+        guncelBorc: response.creditCard.currentDebt, // Use from backend response
+      };
+      
+      // Update credit cards state: replace the updated card
+      setCreditCards((prevCards) => {
+        const index = prevCards.findIndex((c) => c.id === updatedCard.id);
+        if (index >= 0) {
+          const newCards = [...prevCards];
+          newCards[index] = updatedCard;
+          return newCards;
+        }
+        // If card not found, add it (shouldn't happen, but safe fallback)
+        return [...prevCards, updatedCard];
+      });
       
     setOpenForm(null);
     } catch (error: any) {
@@ -2046,12 +2022,21 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                   )}
                   {banks
                     .filter((b) => b.aktifMi)
-                    .map((b) => (
-                      <div key={b.id} className="flex justify-between py-2 text-sm">
-                        <span>{b.hesapAdi}</span>
-                        <span className="font-semibold">{formatTl((b.acilisBakiyesi || 0) + (bankDeltasById[b.id] || 0))}</span>
-                      </div>
-                    ))}
+                    .map((b) => {
+                      // BUG-A FIX: Use backend summary bank balance if available, otherwise calculate from state
+                      const bankBalance = summary?.bankBalances?.find(bb => bb.bankId === b.id)?.balance;
+                      const calculatedBalance = (b.acilisBakiyesi || 0) + (bankDeltasById[b.id] || 0);
+                      const displayBalance = bankBalance !== undefined 
+                        ? (b.acilisBakiyesi || 0) + bankBalance // Backend balance is bankDelta sum only, add opening balance
+                        : calculatedBalance;
+                      
+                      return (
+                        <div key={b.id} className="flex justify-between py-2 text-sm">
+                          <span>{b.hesapAdi}</span>
+                          <span className="font-semibold">{formatTl(displayBalance)}</span>
+                        </div>
+                      );
+                    })}
                 </div>
               </div>
               <div className="card p-4">
@@ -2324,6 +2309,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                 isActive: boolean;
                 currentBalance: number;
               }>>('/api/banks'),
+              // BUG-1 FIX: Backend contract - must include sonEkstreBorcu and manualGuncelBorc
               apiGet<Array<{
                 id: string;
                 name: string;
@@ -2331,12 +2317,12 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                 limit: number | null;
                 closingDay: number | null;
                 dueDay: number | null;
-                sonEkstreBorcu: number;
-                manualGuncelBorc: number | null;
+                sonEkstreBorcu: number; // REQUIRED: Last statement balance from DB
+                manualGuncelBorc: number | null; // REQUIRED: Manual current debt override
                 isActive: boolean;
-                currentDebt: number;
-                availableLimit: number | null;
-                lastOperationDate: string | null;
+                currentDebt?: number; // Optional computed field
+                availableLimit?: number | null; // Optional computed field
+                lastOperationDate?: string | null;
                 bank?: { id: string; name: string } | null;
               }>>('/api/credit-cards'),
             ]);
@@ -2370,123 +2356,47 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
               };
             });
             
-            // Fix: Load credit card extras from localStorage (only for asgariOran and maskeliKartNo)
-            // IMPORTANT: sonEkstreBorcu and guncelBorc come from backend, NOT from localStorage
+            // BUG-1 FIX: localStorage ONLY for UI helpers, NOT for debt values
             const cardExtrasKey = 'esca-webkasa-card-extras';
             const savedExtras = localStorage.getItem(cardExtrasKey);
-            const cardExtras: Record<string, { sonEkstreBorcu: number; asgariOran: number; maskeliKartNo: string }> = savedExtras ? JSON.parse(savedExtras) : {};
+            const cardExtras: Record<string, { sonEkstreBorcu?: number; asgariOran: number; maskeliKartNo: string }> = savedExtras ? JSON.parse(savedExtras) : {};
             
+            // BUG-1 FIX: Robust mapping with fallback - backend is authoritative source
             const mappedCreditCards: CreditCard[] = backendCreditCards.map((card) => {
-              const limit = card.limit; // Preserve null if not set
-              const availableLimit = card.availableLimit; // Preserve null if limit is not set
-              const extras = cardExtras[card.id] || { sonEkstreBorcu: 0, asgariOran: 0.4, maskeliKartNo: '' };
+              const limit = card.limit ?? null;
+              const extras = cardExtras[card.id] || { asgariOran: 0.4, maskeliKartNo: '' };
               
-              // CRITICAL: Use backend values for sonEkstreBorcu and guncelBorc, NOT localStorage
-              // localStorage is only used for asgariOran and maskeliKartNo
-              const mappedCard = {
+              // BUG-1 FIX: Debt values from backend with fallback
+              const sonEkstreBorcu = Number(card.sonEkstreBorcu ?? 0);
+              const guncelBorc = card.manualGuncelBorc !== null && card.manualGuncelBorc !== undefined 
+                ? Number(card.manualGuncelBorc) 
+                : (card.currentDebt !== undefined ? Number(card.currentDebt) : null);
+              
+              // kullanilabilirLimit: calculate from limit and guncelBorc
+              const kullanilabilirLimit = limit !== null && guncelBorc !== null 
+                ? limit - guncelBorc 
+                : (card.availableLimit ?? null);
+
+              return {
                 id: card.id,
                 bankaId: card.bankId || '',
                 kartAdi: card.name,
-                kartLimit: limit, // Use backend limit (can be null)
-                limit: limit, // Use backend limit (can be null)
-                kullanilabilirLimit: availableLimit, // Use backend availableLimit (can be null)
-                asgariOran: extras.asgariOran, // From localStorage
+                kartLimit: limit,
+                limit: limit,
+                kullanilabilirLimit: kullanilabilirLimit,
+                asgariOran: extras.asgariOran, // From localStorage (UI helper only)
                 hesapKesimGunu: card.closingDay ?? 1,
                 sonOdemeGunu: card.dueDay ?? 1,
-                maskeliKartNo: extras.maskeliKartNo, // From localStorage
+                maskeliKartNo: extras.maskeliKartNo, // From localStorage (UI helper only)
                 aktifMi: card.isActive,
-                sonEkstreBorcu: card.sonEkstreBorcu !== undefined && card.sonEkstreBorcu !== null ? card.sonEkstreBorcu : 0, // ALWAYS from backend
-                guncelBorc: card.manualGuncelBorc !== null && card.manualGuncelBorc !== undefined ? card.manualGuncelBorc : null, // ALWAYS from backend
+                sonEkstreBorcu, // From backend (authoritative)
+                guncelBorc, // From backend (authoritative)
               };
-              
-              // DEBUG: Log mapping
-              console.log(`[BUG-1 DEBUG] Mapping card ${card.name}: backend sonEkstreBorcu=${card.sonEkstreBorcu}, manualGuncelBorc=${card.manualGuncelBorc} -> mapped sonEkstreBorcu=${mappedCard.sonEkstreBorcu}, guncelBorc=${mappedCard.guncelBorc}`);
-              
-              return mappedCard;
             });
             
-            // DEBUG: Log final mapped cards
-            console.log('[BUG-1 DEBUG] AyarlarModal onClose - Final mapped credit cards:', JSON.stringify(mappedCreditCards.map(c => ({
-              id: c.id,
-              name: c.kartAdi,
-              sonEkstreBorcu: c.sonEkstreBorcu,
-              guncelBorc: c.guncelBorc
-            })), null, 2));
-            
-            // Mark as manual update to prevent useEffect from overwriting
-            manualUpdateRef.current = true;
-            lastManualUpdateRef.current = Date.now();
-            
+            // BUG-2 FIX: Update state - buildUpcomingPayments useMemo will automatically recalculate
             setBanks(mappedBanks);
             setCreditCards(mappedCreditCards);
-            
-            // Manually refresh upcoming payments with updated credit cards
-            const payments: UpcomingPayment[] = [];
-            const today = todayIso();
-            
-            // Credit cards - use updated mappedCreditCards
-            mappedCreditCards
-              .filter((c) => c.aktifMi && (c.sonEkstreBorcu > 0 || (c.guncelBorc !== null && c.guncelBorc !== undefined && c.guncelBorc > 0)))
-              .forEach((card) => {
-                const amount = card.sonEkstreBorcu > 0 ? card.sonEkstreBorcu : (card.guncelBorc || 0);
-                const { dueIso, dueDisplay, daysLeft } = getCreditCardNextDue(card);
-                payments.push({
-                  id: `cc-${card.id}`,
-                  category: 'KREDI_KARTI',
-                  bankName: mappedBanks.find((b) => b.id === card.bankaId)?.bankaAdi || '-',
-                  name: card.kartAdi,
-                  dueDateIso: dueIso,
-                  dueDateDisplay: dueDisplay,
-                  amount,
-                  daysLeft,
-                });
-              });
-            
-            // Cheques
-            cheques
-              .filter((c) => c.direction === 'BORC')
-              .filter((c) => ['KASADA', 'BANKADA_TAHSILDE', 'ODEMEDE'].includes(c.status))
-              .forEach((cek) => {
-                payments.push({
-                  id: `cek-${cek.id}`,
-                  category: 'CEK',
-                  bankName: cek.bankaAdi || '-',
-                  name: cek.lehtar,
-                  dueDateIso: cek.vadeTarihi,
-                  dueDateDisplay: isoToDisplay(cek.vadeTarihi),
-                  amount: cek.tutar,
-                  daysLeft: diffInDays(today, cek.vadeTarihi),
-                });
-              });
-            
-            // Loans
-            loans
-              .filter((loan) => loan.isActive && loan.installments && loan.installments.length > 0)
-              .forEach((loan) => {
-                const upcomingInstallments = loan.installments!.filter(
-                  (inst) => inst.status === 'BEKLENIYOR' || inst.status === 'GECIKMIS'
-                );
-                
-                if (upcomingInstallments.length > 0) {
-                  const nextInstallment = [...upcomingInstallments].sort((a, b) => 
-                    a.dueDate.localeCompare(b.dueDate)
-                  )[0];
-                  
-                  payments.push({
-                    id: `loan-${loan.id}-${nextInstallment.installmentNumber}`,
-                    category: 'KREDI',
-                    bankName: loan.bank?.name || '-',
-                    name: loan.name,
-                    dueDateIso: nextInstallment.dueDate,
-                    dueDateDisplay: isoToDisplay(nextInstallment.dueDate),
-                    amount: nextInstallment.totalAmount,
-                    daysLeft: diffInDays(today, nextInstallment.dueDate),
-                  });
-                }
-              });
-            
-            payments.sort((a, b) => a.daysLeft - b.daysLeft);
-            setUpcomingPayments(payments);
           } catch (error) {
             console.error('Failed to reload data after settings close:', error);
             // Don't show alert for connection errors - backend might be down
