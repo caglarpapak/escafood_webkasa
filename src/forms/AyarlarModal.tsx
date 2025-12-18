@@ -10,6 +10,8 @@ import { CreditCard } from '../models/card';
 import { Loan } from '../models/loan';
 import { GlobalSettings } from '../models/settings';
 import { generateId } from '../utils/id';
+import { bulkSaveCreditCards, CreditCardApiResponse } from '../utils/api';
+import { mapCreditCardApiToModel } from '../utils/creditCard';
 
 export type SettingsTabKey =
   | 'BANKALAR'
@@ -965,10 +967,55 @@ function CardTab({ banks, creditCards, setCreditCards, onDirty }: { banks: BankM
 
   const remove = (id: string) => setCreditCards(creditCards.filter((c) => c.id !== id));
 
+  const handleSaveCreditCards = async () => {
+    const payload: CreditCardApiResponse[] = creditCards.map((c) => ({
+      id: c.id,
+      name: c.kartAdi,
+      bankId: c.bankaId || null,
+      limit: c.limit ?? c.kartLimit ?? 0,
+      sonEkstreBorcu: c.sonEkstreBorcu ?? 0,
+      manualGuncelBorc: c.guncelBorc ?? 0,
+      closingDay: c.hesapKesimGunu,
+      dueDay: c.sonOdemeGunu,
+      isActive: c.aktifMi,
+    }));
+
+    try {
+      const response = await bulkSaveCreditCards(payload);
+      // Debug log to verify backend values
+      // eslint-disable-next-line no-console
+      console.log('credit-card-bulk-save-response', response);
+      setCreditCards((prev) => {
+        const mapped = response.map(mapCreditCardApiToModel);
+        const byId = new Map(mapped.map((c) => [c.id, c]));
+        const merged = prev.map((card) => {
+          const incoming = byId.get(card.id);
+          if (!incoming) return card;
+          return { ...card, ...incoming };
+        });
+        mapped.forEach((card) => {
+          if (!prev.find((p) => p.id === card.id)) {
+            merged.push(card);
+          }
+        });
+        return merged;
+      });
+      onDirty();
+      alert('Kredi kartları kaydedildi');
+    } catch (error: any) {
+      alert(error?.message || 'Kredi kartları kaydedilemedi');
+    }
+  };
+
   const cardBanks = banks.filter((b) => b.krediKartiVarMi || b.id === form.bankaId);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="lg:col-span-2 flex justify-end">
+        <button className="btn-primary" onClick={handleSaveCreditCards}>
+          Kredi Kartlarını Kaydet
+        </button>
+      </div>
       <div className="max-h-96 overflow-auto">
         <table className="w-full text-sm">
           <thead>

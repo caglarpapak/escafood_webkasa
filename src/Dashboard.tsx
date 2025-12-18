@@ -15,8 +15,14 @@ import { formatTl } from './utils/money';
 import { getNextBelgeNo } from './utils/documentNo';
 import { generateId } from './utils/id';
 import { buildLoanSchedule } from './utils/loan';
-import { getCreditCardNextDue } from './utils/creditCard';
-import { apiGet, apiPost, createTransaction, CreateTransactionRequest } from './utils/api';
+import { getCreditCardNextDue, mapCreditCardApiToModel } from './utils/creditCard';
+import {
+  apiGet,
+  apiPost,
+  createTransaction,
+  CreateTransactionRequest,
+  getCreditCards,
+} from './utils/api';
 import useBanks from './hooks/useBanks';
 import NakitGiris, { NakitGirisFormValues } from './forms/NakitGiris';
 import NakitCikis, { NakitCikisFormValues } from './forms/NakitCikis';
@@ -86,6 +92,13 @@ function mergeTransactions(
   return recalcBalances([...existing, ...filtered]);
 }
 
+function getEffectiveBankDelta(tx: DailyTransaction): number {
+  if (typeof tx.bankDelta === 'number') return tx.bankDelta;
+  if (tx.type === 'POS_KOMISYONU' && tx.bankId && tx.displayOutgoing) return -tx.displayOutgoing;
+  if (tx.type === 'POS_TAHSILAT_BRUT' && tx.bankId && tx.displayIncoming) return tx.displayIncoming;
+  return 0;
+}
+
 export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   const [openForm, setOpenForm] = useState<OpenFormKey>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTabKey>('BANKALAR');
@@ -99,6 +112,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
   const [loans, setLoans] = useState<Loan[]>([]);
+  const [paidLoanInstallments, setPaidLoanInstallments] = useState<Record<string, number>>({});
   const [globalSettings, setGlobalSettings] = useState<GlobalSettings>({
     varsayilanAsgariOdemeOrani: 0.4,
     varsayilanBsmvOrani: 0.05,
@@ -147,6 +161,38 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   }, []);
 
   useEffect(() => {
+    const fetchCreditCards = async () => {
+      try {
+        const response = await getCreditCards();
+        setCreditCards(response.map(mapCreditCardApiToModel));
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to fetch credit cards:', error);
+      }
+    };
+    fetchCreditCards();
+  }, []);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('esca-paid-loans');
+      if (saved) {
+        setPaidLoanInstallments(JSON.parse(saved));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('esca-paid-loans', JSON.stringify(paidLoanInstallments));
+    } catch {
+      // ignore
+    }
+  }, [paidLoanInstallments]);
+
+  useEffect(() => {
     const payments: UpcomingPayment[] = [];
     const today = todayIso();
 
@@ -171,7 +217,11 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       .filter((l) => l.aktifMi)
       .forEach((loan) => {
         const schedule = buildLoanSchedule(loan);
-        const nextInstallment = schedule.find((inst) => inst.dateIso >= today) || schedule[schedule.length - 1];
+        const paidUpTo = paidLoanInstallments[loan.id] || 0;
+        const remainingSchedule = schedule.filter((inst) => inst.index > paidUpTo);
+        const nextInstallment =
+          remainingSchedule.find((inst) => inst.dateIso >= today) ||
+          remainingSchedule[remainingSchedule.length - 1];
         if (!nextInstallment) return;
         payments.push({
           id: `loan-${loan.id}`,
@@ -202,12 +252,13 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       });
     payments.sort((a, b) => a.daysLeft - b.daysLeft);
     setUpcomingPayments(payments);
-  }, [banks, creditCards, loans, cheques]);
+  }, [banks, creditCards, loans, cheques, paidLoanInstallments]);
 
   const bankDeltasById = useMemo(() => {
     return dailyTransactions.reduce((map, tx) => {
-      if (tx.bankId && tx.bankDelta) {
-        map[tx.bankId] = (map[tx.bankId] || 0) + tx.bankDelta;
+      if (tx.bankId) {
+        const delta = getEffectiveBankDelta(tx);
+        map[tx.bankId] = (map[tx.bankId] || 0) + delta;
       }
       return map;
     }, {} as Record<string, number>);
@@ -259,8 +310,6 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       documentNo,
       type: isBankToCash ? 'BANKA_KASA_TRANSFER' : 'NAKIT_TAHSILAT',
       source: isBankToCash ? 'BANKA' : 'KASA',
-      type: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? 'BANKA_KASA_TRANSFER' : 'NAKIT_TAHSILAT',
-      source: values.kaynak === 'KASA_TRANSFER_BANKADAN' ? 'BANKA' : 'KASA',
       counterparty,
       description: values.aciklama || '',
       incoming: values.tutar,
@@ -289,8 +338,6 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       documentNo,
       type: isCashToBank ? 'KASA_BANKA_TRANSFER' : 'NAKIT_ODEME',
       source: 'KASA',
-      type: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? 'KASA_BANKA_TRANSFER' : 'NAKIT_ODEME',
-      source: values.kaynak === 'KASA_TRANSFER_BANKAYA' ? 'BANKA' : 'KASA',
       counterparty,
       description: values.aciklama || '',
       incoming: 0,
@@ -367,7 +414,12 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     }
   };
 
-  const handleBankaNakitCikisSaved = (values: BankaNakitCikisFormValues) => {
+  const handleBankaNakitCikisSaved = async (values: BankaNakitCikisFormValues) => {
+    let paidInstallmentIndex: number | null = null;
+    if (values.islemTuru === 'KREDI_TAKSIDI' && !values.krediId) {
+      setOpenForm(null);
+      return;
+    }
     if (values.islemTuru === 'VIRMAN' && values.hedefBankaId) {
       const documentNoCks = getNextBelgeNo('BNK-CKS', values.islemTarihiIso, dailyTransactions);
       const documentNoGrs = getNextBelgeNo('BNK-GRS', values.islemTarihiIso, [
@@ -425,6 +477,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           const today = values.islemTarihiIso || todayIso();
           const nextInstallment = schedule.find((inst) => inst.dateIso >= today) || schedule[schedule.length - 1];
           if (nextInstallment) {
+            paidInstallmentIndex = nextInstallment.index;
             tutar = nextInstallment.totalPayment;
             if (!aciklama) {
               aciklama = `${loan.krediAdi} - ${nextInstallment.index}. taksit`;
@@ -545,7 +598,6 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             ? 'KREDI_KARTI_EKSTRE_ODEME'
             : 'BANKA_HAVALE_CIKIS',
         source: values.islemTuru === 'KREDI_KARTI_ODEME' ? 'KREDI_KARTI' : 'BANKA',
-        source: 'BANKA',
         counterparty,
         description,
         incoming: 0,
@@ -558,6 +610,14 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         createdBy: currentUser.email,
       };
       addTransactions([tx]);
+    }
+    if (paidInstallmentIndex && values.krediId) {
+      setPaidLoanInstallments((prev) => {
+        const current = prev[values.krediId] || 0;
+        const nextPaid = paidInstallmentIndex ? Math.max(current, paidInstallmentIndex) : current;
+        const updated = { ...prev, [values.krediId]: nextPaid };
+        return updated;
+      });
     }
     setOpenForm(null);
   };
@@ -585,7 +645,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       outgoing: 0,
       balanceAfter: 0,
       bankId: values.bankaId,
-      bankDelta: values.netTutar,
+      bankDelta: undefined,
       displayIncoming: values.brutTutar,
       createdAtIso: nowIso,
       createdBy: currentUser.email,
@@ -606,7 +666,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       outgoing: 0,
       balanceAfter: 0,
       bankId: values.bankaId,
-      bankDelta: 0,
+      bankDelta: undefined,
       displayOutgoing: values.komisyonTutar,
       createdAtIso: nowIso,
       createdBy: currentUser.email,
@@ -1117,6 +1177,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         banks={banks}
         cheques={cheques}
         creditCards={creditCards}
+        loans={loans}
       />
       <PosTahsilat
         isOpen={openForm === 'POS_TAHSILAT'}

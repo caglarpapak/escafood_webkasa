@@ -1,4 +1,5 @@
 import { CreditCard } from '../models/card';
+import { CreditCardApiResponse } from './api';
 import { diffInDays, isoToDisplay, todayIso } from './date';
 
 export function getCreditCardNextDue(card: CreditCard) {
@@ -30,5 +31,25 @@ export function getCreditCardNextDue(card: CreditCard) {
     dueIso,
     dueDisplay: isoToDisplay(dueIso),
     daysLeft: diffInDays(today, dueIso),
+  };
+}
+
+export function mapCreditCardApiToModel(api: CreditCardApiResponse): CreditCard {
+  const limit = api.limit ?? 0;
+  const manualDebt = api.manualGuncelBorc ?? 0;
+  return {
+    id: api.id,
+    kartAdi: api.name,
+    bankaId: api.bankId || '',
+    kartLimit: limit,
+    limit,
+    kullanilabilirLimit: limit - manualDebt,
+    asgariOran: 0.4,
+    hesapKesimGunu: api.closingDay ?? 1,
+    sonOdemeGunu: api.dueDay ?? 1,
+    maskeliKartNo: '',
+    aktifMi: api.isActive,
+    sonEkstreBorcu: api.sonEkstreBorcu ?? 0,
+    guncelBorc: manualDebt,
   };
 }

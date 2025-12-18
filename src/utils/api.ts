@@ -138,3 +138,22 @@ export function createTransaction(payload: CreateTransactionRequest) {
   return apiPost<TransactionResponse>('/api/transactions', payload);
 }
 
+export interface CreditCardApiResponse {
+  id: string;
+  name: string;
+  bankId: string | null;
+  limit: number | null;
+  sonEkstreBorcu: number;
+  manualGuncelBorc: number | null;
+  closingDay: number | null;
+  dueDay: number | null;
+  isActive: boolean;
+}
+
+export function getCreditCards() {
+  return apiGet<CreditCardApiResponse[]>('/api/credit-cards');
+}
+
+export function bulkSaveCreditCards(cards: CreditCardApiResponse[]) {
+  return apiPost<CreditCardApiResponse[]>('/api/credit-cards/bulk-save', { cards });
+}

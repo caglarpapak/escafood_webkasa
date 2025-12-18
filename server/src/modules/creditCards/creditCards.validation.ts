@@ -6,6 +6,8 @@ export const createCreditCardSchema = z.object({
   name: z.string().min(1, 'Kart adı gereklidir'),
   bankId: z.string().uuid().nullable().optional(),
   limit: z.number().nonnegative('Limit negatif olamaz').nullable().optional(),
+  sonEkstreBorcu: z.number().nonnegative('Son ekstre borcu negatif olamaz').optional(),
+  manualGuncelBorc: z.number().nullable().optional(),
   closingDay: z.number().int().min(1).max(31).nullable().optional(),
   dueDay: z.number().int().min(1).max(31).nullable().optional(),
   isActive: z.boolean().optional(),
@@ -15,9 +17,27 @@ export const updateCreditCardSchema = z.object({
   name: z.string().min(1).optional(),
   bankId: z.string().uuid().nullable().optional(),
   limit: z.number().nonnegative().nullable().optional(),
+  sonEkstreBorcu: z.number().nonnegative().optional(),
+  manualGuncelBorc: z.number().nullable().optional(),
   closingDay: z.number().int().min(1).max(31).nullable().optional(),
   dueDay: z.number().int().min(1).max(31).nullable().optional(),
   isActive: z.boolean().optional(),
+});
+
+export const bulkSaveSchema = z.object({
+  cards: z.array(
+    z.object({
+      id: z.string().uuid().optional(),
+      name: z.string().min(1),
+      bankId: z.string().uuid().nullable().optional(),
+      limit: z.number().nonnegative().nullable().optional(),
+      sonEkstreBorcu: z.number().nonnegative().optional(),
+      manualGuncelBorc: z.number().nullable().optional(),
+      closingDay: z.number().int().min(1).max(31).nullable().optional(),
+      dueDay: z.number().int().min(1).max(31).nullable().optional(),
+      isActive: z.boolean().optional(),
+    })
+  ),
 });
 
 export const createExpenseSchema = z.object({
@@ -50,4 +70,3 @@ export const createPaymentSchema = z.object({
     path: ['bankId'],
   }
 );
-

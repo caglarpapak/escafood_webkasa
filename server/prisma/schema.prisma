@@ -126,6 +126,8 @@ model CreditCard {
   name      String
   bankId    String?
   limit     Decimal?  @db.Decimal(18, 2)
+  sonEkstreBorcu   Decimal   @db.Decimal(18, 2) @default(0)
+  manualGuncelBorc Decimal?  @db.Decimal(18, 2)
   closingDay Int?
   dueDay     Int?
   isActive  Boolean   @default(true)

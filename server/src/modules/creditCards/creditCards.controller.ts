@@ -5,6 +5,7 @@ import {
   UpdateCreditCardDto,
   CreateExpenseDto,
   CreatePaymentDto,
+  BulkSaveCreditCardDto,
 } from './creditCards.types';
 import { getUserId } from '../../config/auth';
 
@@ -103,3 +104,14 @@ export async function createPayment(req: Request, res: Response): Promise<void> 
   }
 }
 
+export async function bulkSaveCreditCards(req: Request, res: Response): Promise<void> {
+  const { cards } = req.body as { cards: BulkSaveCreditCardDto[] };
+  const userId = getUserId(req);
+
+  try {
+    const saved = await creditCardsService.bulkSave(cards || [], userId);
+    res.json(saved);
+  } catch (error: any) {
+    res.status(400).json({ message: error.message || 'Failed to bulk save credit cards' });
+  }
+}

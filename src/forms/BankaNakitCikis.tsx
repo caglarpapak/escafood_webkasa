@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { BankMaster } from '../models/bank';
 import { Cheque } from '../models/cheque';
 import { CreditCard } from '../models/card';
+import { Loan } from '../models/loan';
 import { formatTl, formatTlPlain, parseTl } from '../utils/money';
 import { isoToDisplay, todayIso } from '../utils/date';
 
@@ -42,6 +43,7 @@ interface Props {
   banks: BankMaster[];
   cheques: Cheque[];
   creditCards: CreditCard[];
+  loans: Loan[];
 }
 
 const turLabels: Record<BankaNakitCikisTuru, string> = {
@@ -73,6 +75,7 @@ export default function BankaNakitCikis({
   banks,
   cheques,
   creditCards,
+  loans,
 }: Props) {
   const safeBanks: BankMaster[] = Array.isArray(banks) ? banks : [];
   const safeCreditCards: CreditCard[] = Array.isArray(creditCards) ? creditCards : [];
@@ -110,6 +113,10 @@ export default function BankaNakitCikis({
       })),
     [eligibleCards, safeBanks]
   );
+  const loanOptions = useMemo(
+    () => loans.map((loan) => ({ id: loan.id, label: loan.krediAdi })),
+    [loans]
+  );
 
   useEffect(() => {
     if (isOpen) {
@@ -124,6 +131,7 @@ export default function BankaNakitCikis({
       setDirty(false);
       setSelectedChequeId('');
       setKrediKartiId('');
+      setKrediId('');
     }
   }, [isOpen]);
 
@@ -160,6 +168,7 @@ export default function BankaNakitCikis({
     if (faturaRequired && !faturaMuhatabi) return;
     if (hedefRequired && !hedefBankaId) return;
     if (isCardPayment && !krediKartiId) return;
+    if (islemTuru === 'KREDI_TAKSIDI' && !krediId) return;
     if (islemTarihiIso > today) {
       alert('Gelecek tarihli işlem kaydedilemez.');
       return;
@@ -178,6 +187,7 @@ export default function BankaNakitCikis({
       isCardPayment
         ? `Kart: ${selectedCard?.kartAdi || '-'}`
         : `Muhatap: ${islemTuru === 'CEK_ODEME' ? selectedCheque?.lehtar || '-' : muhatap || '-'}`,
+      islemTuru === 'KREDI_TAKSIDI' ? `Kredi: ${loanOptions.find((l) => l.id === krediId)?.label || '-'}` : null,
       `Tutar: ${formatTl(tutar)}`,
       `Açıklama: ${aciklama || '-'}`,
     ].filter(Boolean) as string[];
@@ -200,7 +210,7 @@ export default function BankaNakitCikis({
       aciklama: aciklama || undefined,
       tutar,
       kaydedenKullanici: currentUserEmail,
-      krediId: null,
+      krediId: islemTuru === 'KREDI_TAKSIDI' ? krediId || null : null,
       cekId: islemTuru === 'CEK_ODEME' ? selectedChequeId : null,
       krediKartiId: isCardPayment ? krediKartiId : null,
     });
@@ -272,6 +282,7 @@ export default function BankaNakitCikis({
                 setDirty(true);
                 setSelectedChequeId('');
                 setKrediKartiId('');
+                setKrediId('');
                 if (next !== 'CEK_ODEME') setTutarText('');
               }}
             >
@@ -297,6 +308,26 @@ export default function BankaNakitCikis({
               >
                 <option value="">Seçiniz</option>
                 {krediKartiOptions.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {islemTuru === 'KREDI_TAKSIDI' && (
+            <div className="space-y-2">
+              <label>Kredi</label>
+              <select
+                className="w-full"
+                value={krediId}
+                onChange={(e) => {
+                  setKrediId(e.target.value);
+                  setDirty(true);
+                }}
+              >
+                <option value="">Seçiniz</option>
+                {loanOptions.map((opt) => (
                   <option key={opt.id} value={opt.id}>
                     {opt.label}
                   </option>

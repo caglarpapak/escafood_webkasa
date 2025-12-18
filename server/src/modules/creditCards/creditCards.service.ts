@@ -9,6 +9,7 @@ import {
   CreditCardOperationDto,
   ExpenseResponse,
   PaymentResponse,
+  BulkSaveCreditCardDto,
 } from './creditCards.types';
 
 /**
@@ -48,6 +49,48 @@ async function calculateBalanceAfter(
 }
 
 export class CreditCardsService {
+  private mapCreditCard(card: any): CreditCardDto {
+    const currentDebt = card.operations
+      ? card.operations.reduce((sum: number, op: any) => sum + Number(op.amount), 0)
+      : 0;
+    const lastOperationDate =
+      card.operations && card.operations.length > 0 ? card.operations[0].isoDate : null;
+
+    return {
+      id: card.id,
+      name: card.name,
+      bankId: card.bankId,
+      limit: card.limit !== null && card.limit !== undefined ? Number(card.limit) : null,
+      sonEkstreBorcu: card.sonEkstreBorcu !== null && card.sonEkstreBorcu !== undefined ? Number(card.sonEkstreBorcu) : 0,
+      manualGuncelBorc:
+        card.manualGuncelBorc !== null && card.manualGuncelBorc !== undefined
+          ? Number(card.manualGuncelBorc)
+          : null,
+      closingDay: card.closingDay,
+      dueDay: card.dueDay,
+      isActive: card.isActive,
+      createdAt: card.createdAt.toISOString(),
+      createdBy: card.createdBy,
+      updatedAt: card.updatedAt?.toISOString() || null,
+      updatedBy: card.updatedBy || null,
+      deletedAt: card.deletedAt?.toISOString() || null,
+      deletedBy: card.deletedBy || null,
+      currentDebt,
+      lastOperationDate,
+      bank: card.bank || null,
+    };
+  }
+
+  private async logCardState(id: string): Promise<void> {
+    if (process.env.DEBUG_CREDIT_CARD_SAVE !== '1') return;
+    const fresh = await prisma.creditCard.findUnique({
+      where: { id },
+      select: { id: true, sonEkstreBorcu: true, manualGuncelBorc: true },
+    });
+    // eslint-disable-next-line no-console
+    console.log('[credit-card-save]', fresh?.id, Number(fresh?.sonEkstreBorcu || 0), fresh?.manualGuncelBorc ? Number(fresh.manualGuncelBorc) : null);
+  }
+
   /**
    * Get all credit cards with computed currentDebt
    */
@@ -81,30 +124,7 @@ export class CreditCardsService {
       },
     });
 
-    return cards.map((card) => {
-      const currentDebt = card.operations.reduce((sum, op) => sum + Number(op.amount), 0);
-      const lastOperationDate =
-        card.operations.length > 0 ? card.operations[0].isoDate : null;
-
-      return {
-        id: card.id,
-        name: card.name,
-        bankId: card.bankId,
-        limit: card.limit ? Number(card.limit) : null,
-        closingDay: card.closingDay,
-        dueDay: card.dueDay,
-        isActive: card.isActive,
-        createdAt: card.createdAt.toISOString(),
-        createdBy: card.createdBy,
-        updatedAt: card.updatedAt?.toISOString() || null,
-        updatedBy: card.updatedBy || null,
-        deletedAt: card.deletedAt?.toISOString() || null,
-        deletedBy: card.deletedBy || null,
-        currentDebt,
-        lastOperationDate,
-        bank: card.bank || null,
-      };
-    });
+    return cards.map((card) => this.mapCreditCard(card));
   }
 
   /**
@@ -139,28 +159,7 @@ export class CreditCardsService {
       return null;
     }
 
-    const currentDebt = card.operations.reduce((sum, op) => sum + Number(op.amount), 0);
-    const lastOperationDate =
-      card.operations.length > 0 ? card.operations[0].isoDate : null;
-
-    return {
-      id: card.id,
-      name: card.name,
-      bankId: card.bankId,
-      limit: card.limit ? Number(card.limit) : null,
-      closingDay: card.closingDay,
-      dueDay: card.dueDay,
-      isActive: card.isActive,
-      createdAt: card.createdAt.toISOString(),
-      createdBy: card.createdBy,
-      updatedAt: card.updatedAt?.toISOString() || null,
-      updatedBy: card.updatedBy || null,
-      deletedAt: card.deletedAt?.toISOString() || null,
-      deletedBy: card.deletedBy || null,
-      currentDebt,
-      lastOperationDate,
-      bank: card.bank || null,
-    };
+    return this.mapCreditCard(card);
   }
 
   /**
@@ -172,6 +171,8 @@ export class CreditCardsService {
         name: data.name,
         bankId: data.bankId || null,
         limit: data.limit !== undefined ? data.limit : null,
+        sonEkstreBorcu: data.sonEkstreBorcu ?? 0,
+        manualGuncelBorc: data.manualGuncelBorc ?? null,
         closingDay: data.closingDay || null,
         dueDay: data.dueDay || null,
         isActive: data.isActive !== undefined ? data.isActive : true,
@@ -187,24 +188,9 @@ export class CreditCardsService {
       },
     });
 
-    return {
-      id: card.id,
-      name: card.name,
-      bankId: card.bankId,
-      limit: card.limit ? Number(card.limit) : null,
-      closingDay: card.closingDay,
-      dueDay: card.dueDay,
-      isActive: card.isActive,
-      createdAt: card.createdAt.toISOString(),
-      createdBy: card.createdBy,
-      updatedAt: card.updatedAt?.toISOString() || null,
-      updatedBy: card.updatedBy || null,
-      deletedAt: card.deletedAt?.toISOString() || null,
-      deletedBy: card.deletedBy || null,
-      currentDebt: 0,
-      lastOperationDate: null,
-      bank: card.bank || null,
-    };
+    await this.logCardState(card.id);
+
+    return this.mapCreditCard({ ...card, operations: [] });
   }
 
   /**
@@ -232,6 +218,9 @@ export class CreditCardsService {
       data: {
         ...data,
         limit: data.limit !== undefined ? data.limit : card.limit,
+        sonEkstreBorcu: data.sonEkstreBorcu ?? card.sonEkstreBorcu ?? 0,
+        manualGuncelBorc:
+          data.manualGuncelBorc !== undefined ? data.manualGuncelBorc : card.manualGuncelBorc,
         updatedBy,
         updatedAt: new Date(),
       },
@@ -257,28 +246,78 @@ export class CreditCardsService {
       },
     });
 
-    const currentDebt = updated.operations.reduce((sum, op) => sum + Number(op.amount), 0);
-    const lastOperationDate =
-      updated.operations.length > 0 ? updated.operations[0].isoDate : null;
+    await this.logCardState(updated.id);
 
-    return {
-      id: updated.id,
-      name: updated.name,
-      bankId: updated.bankId,
-      limit: updated.limit ? Number(updated.limit) : null,
-      closingDay: updated.closingDay,
-      dueDay: updated.dueDay,
-      isActive: updated.isActive,
-      createdAt: updated.createdAt.toISOString(),
-      createdBy: updated.createdBy,
-      updatedAt: updated.updatedAt?.toISOString() || null,
-      updatedBy: updated.updatedBy || null,
-      deletedAt: updated.deletedAt?.toISOString() || null,
-      deletedBy: updated.deletedBy || null,
-      currentDebt,
-      lastOperationDate,
-      bank: updated.bank || null,
-    };
+    return this.mapCreditCard(updated);
+  }
+
+  async bulkSave(cards: BulkSaveCreditCardDto[], userId: string): Promise<CreditCardDto[]> {
+    const results: CreditCardDto[] = [];
+
+    for (const card of cards) {
+      const data = {
+        name: card.name || '',
+        bankId: card.bankId || null,
+        limit: card.limit ?? null,
+        sonEkstreBorcu: card.sonEkstreBorcu ?? 0,
+        manualGuncelBorc: card.manualGuncelBorc ?? null,
+        closingDay: card.closingDay ?? null,
+        dueDay: card.dueDay ?? null,
+        isActive: card.isActive ?? true,
+        updatedBy: userId,
+        updatedAt: new Date(),
+      };
+
+      let saved;
+      if (card.id) {
+        saved = await prisma.creditCard.upsert({
+          where: { id: card.id },
+          update: data,
+          create: {
+            ...data,
+            createdBy: userId,
+          },
+          include: {
+            bank: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            operations: {
+              where: { deletedAt: null },
+              select: { isoDate: true, amount: true },
+              orderBy: { isoDate: 'desc' },
+            },
+          },
+        });
+      } else {
+        saved = await prisma.creditCard.create({
+          data: {
+            ...data,
+            createdBy: userId,
+          },
+          include: {
+            bank: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            operations: {
+              where: { deletedAt: null },
+              select: { isoDate: true, amount: true },
+              orderBy: { isoDate: 'desc' },
+            },
+          },
+        });
+      }
+
+      await this.logCardState(saved.id);
+      results.push(this.mapCreditCard(saved));
+    }
+
+    return results;
   }
 
   /**
@@ -460,4 +499,3 @@ export class CreditCardsService {
     };
   }
 }
-

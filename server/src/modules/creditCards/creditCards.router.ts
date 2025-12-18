@@ -6,12 +6,14 @@ import {
   updateCreditCard,
   createExpense,
   createPayment,
+  bulkSaveCreditCards,
 } from './creditCards.controller';
 import {
   createCreditCardSchema,
   updateCreditCardSchema,
   createExpenseSchema,
   createPaymentSchema,
+  bulkSaveSchema,
 } from './creditCards.validation';
 import { z } from 'zod';
 
@@ -42,6 +44,7 @@ function validate(schema: z.ZodSchema) {
  * Routes
  */
 router.get('/', listCreditCards);
+router.post('/bulk-save', validate(bulkSaveSchema), bulkSaveCreditCards);
 router.post('/', validate(createCreditCardSchema), createCreditCard);
 router.get('/:id', getCreditCard);
 router.put('/:id', validate(updateCreditCardSchema), updateCreditCard);
@@ -49,4 +52,3 @@ router.post('/expense', validate(createExpenseSchema), createExpense);
 router.post('/payment', validate(createPaymentSchema), createPayment);
 
 export default router;
-
