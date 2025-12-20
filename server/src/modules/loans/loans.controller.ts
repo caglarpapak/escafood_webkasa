@@ -8,6 +8,7 @@ import {
   updateLoanSchema,
   loanInstallmentIdParamSchema,
   payInstallmentSchema,
+  payNextInstallmentSchema,
 } from './loans.validation';
 import { getUserId } from '../../config/auth';
 
@@ -103,6 +104,25 @@ export class LoansController {
         params.installmentId,
         payload.isoDate,
         payload.description || null,
+        createdBy
+      );
+      res.json(result);
+    } catch (error) {
+      handleError(res, error);
+    }
+  }
+
+  async payNextInstallment(req: Request, res: Response) {
+    try {
+      const params = loanIdParamSchema.parse(req.params);
+      const payload = payNextInstallmentSchema.parse(req.body);
+      const createdBy = getUserId(req);
+      const result = await service.payNextInstallment(
+        params.id,
+        payload.bankId,
+        payload.isoDate || null,
+        payload.amount || null,
+        payload.note || null,
         createdBy
       );
       res.json(result);

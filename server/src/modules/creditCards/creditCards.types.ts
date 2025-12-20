@@ -139,4 +139,23 @@ export interface PaymentResponse {
     bankDelta: number;
     outgoing: number;
   };
+  // CRITICAL FIX: Include updated credit card in response (same as ExpenseResponse)
+  creditCard: {
+    id: string;
+    name: string;
+    bankId: string | null;
+    limit: number | null;
+    closingDay: number | null;
+    dueDay: number | null;
+    sonEkstreBorcu: number;
+    manualGuncelBorc: number | null;
+    isActive: boolean;
+    currentDebt: number;
+    availableLimit: number | null;
+    lastOperationDate: string | null;
+    bank: {
+      id: string;
+      name: string;
+    } | null;
+  };
 }

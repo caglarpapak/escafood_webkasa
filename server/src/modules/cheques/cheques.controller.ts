@@ -7,6 +7,8 @@ import {
   createChequeSchema,
   updateChequeSchema,
   updateChequeStatusSchema,
+  payableChequesQuerySchema,
+  payChequeSchema,
 } from './cheques.validation';
 import { getUserId } from '../../config/auth';
 
@@ -64,6 +66,28 @@ export class ChequesController {
       const payload = updateChequeStatusSchema.parse(req.body);
       const updatedBy = getUserId(req);
       const result = await service.updateChequeStatus(params.id, payload, updatedBy);
+      res.json(result);
+    } catch (error) {
+      handleError(res, error);
+    }
+  }
+
+  async getPayableCheques(req: Request, res: Response) {
+    try {
+      const query = payableChequesQuerySchema.parse(req.query);
+      const cheques = await service.getPayableCheques(query.bankId);
+      res.json(cheques);
+    } catch (error) {
+      handleError(res, error);
+    }
+  }
+
+  async payCheque(req: Request, res: Response) {
+    try {
+      const params = chequeIdParamSchema.parse(req.params);
+      const payload = payChequeSchema.parse(req.body);
+      const createdBy = getUserId(req);
+      const result = await service.payCheque(params.id, payload, createdBy);
       res.json(result);
     } catch (error) {
       handleError(res, error);

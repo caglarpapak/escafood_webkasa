@@ -150,6 +150,18 @@ export class TransactionsService {
       console.log(`Bank verified: ${bank.name} (${bank.id})`);
     }
 
+    // DEBUG: Log POS transactions to verify bankDelta and bankId
+    if (data.type === 'POS_TAHSILAT_BRUT' || data.type === 'POS_KOMISYONU') {
+      console.log('[POS DEBUG] Creating POS transaction:', {
+        type: data.type,
+        bankId: bankId,
+        providedBankDelta: data.bankDelta,
+        normalizedBankDelta: bankDelta,
+        displayIncoming: data.displayIncoming,
+        displayOutgoing: data.displayOutgoing,
+      });
+    }
+    
     // Log for debugging - detailed logging with normalized values
     console.log('=== CREATE TRANSACTION SERVICE ===');
     console.log('Input data:', JSON.stringify(data, null, 2));
@@ -190,6 +202,17 @@ export class TransactionsService {
       const transaction = await prisma.transaction.create({
         data: prismaData,
       });
+
+      // DEBUG: Log created POS transaction from DB
+      if (transaction.type === 'POS_TAHSILAT_BRUT' || transaction.type === 'POS_KOMISYONU') {
+        console.log('[POS DEBUG] Transaction created in DB:', {
+          id: transaction.id,
+          type: transaction.type,
+          bankId: transaction.bankId,
+          bankDelta: transaction.bankDelta?.toNumber(),
+          documentNo: transaction.documentNo,
+        });
+      }
 
       console.log('Transaction created successfully:', transaction.id);
       return this.mapToDto(transaction);

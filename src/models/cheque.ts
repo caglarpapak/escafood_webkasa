@@ -3,6 +3,7 @@ export type ChequeStatus =
   | 'BANKADA_TAHSILDE'
   | 'ODEMEDE'
   | 'TAHSIL_EDILDI'
+  | 'ODENDI'
   | 'KARSILIKSIZ';
 
 export function normalizeLegacyChequeStatus(status: string): ChequeStatus {
@@ -21,6 +22,7 @@ export function normalizeLegacyChequeStatus(status: string): ChequeStatus {
     case 'BANKADA_TAHSILDE':
     case 'ODEMEDE':
     case 'TAHSIL_EDILDI':
+    case 'ODENDI':
     case 'KARSILIKSIZ':
       return status;
 

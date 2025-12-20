@@ -50,6 +50,7 @@ enum ChequeStatus {
   BANKADA_TAHSILDE
   ODEMEDE
   TAHSIL_EDILDI
+  ODENDI
   KARSILIKSIZ
 }
 
@@ -194,30 +195,35 @@ model CreditCardOperation {
 }
 
 model Cheque {
-  id           String          @id @default(uuid())
-  cekNo        String
-  amount       Decimal         @db.Decimal(18, 2)
-  entryDate    String
-  maturityDate String
-  status       ChequeStatus
-  direction    ChequeDirection
-  customerId   String?
-  supplierId   String?
-  bankId       String?
-  description  String?
-  attachmentId String?
-  createdAt    DateTime        @default(now())
-  createdBy    String
-  updatedAt    DateTime?
-  updatedBy    String?
-  deletedAt    DateTime?
-  deletedBy    String?
+  id                   String          @id @default(uuid())
+  cekNo                String
+  amount               Decimal         @db.Decimal(18, 2)
+  entryDate            String
+  maturityDate         String
+  status               ChequeStatus
+  direction            ChequeDirection
+  customerId           String?
+  supplierId           String?
+  bankId               String?
+  description          String?
+  attachmentId         String?
+  // Payment tracking fields (for ODENDI status)
+  paidAt               DateTime?
+  paidBankId           String?
+  paymentTransactionId String?         @unique
+  createdAt            DateTime        @default(now())
+  createdBy            String
+  updatedAt            DateTime?
+  updatedBy            String?
+  deletedAt            DateTime?
+  deletedBy            String?
 
   bank         Bank?         @relation(fields: [bankId], references: [id])
   customer     Customer?     @relation(fields: [customerId], references: [id])
   supplier     Supplier?     @relation(fields: [supplierId], references: [id])
   attachment   Attachment?   @relation(fields: [attachmentId], references: [id])
   transactions Transaction[]
+  paymentTransaction Transaction? @relation("ChequePaymentTransaction", fields: [paymentTransactionId], references: [id])
 
   createdByUser User  @relation("ChequeCreatedBy", fields: [createdBy], references: [id])
   updatedByUser User? @relation("ChequeUpdatedBy", fields: [updatedBy], references: [id])
@@ -322,6 +328,7 @@ model Transaction {
   bank            Bank?            @relation(fields: [bankId], references: [id])
   creditCard      CreditCard?      @relation(fields: [creditCardId], references: [id])
   cheque          Cheque?          @relation(fields: [chequeId], references: [id])
+  chequePayment   Cheque?          @relation("ChequePaymentTransaction")
   customer        Customer?        @relation(fields: [customerId], references: [id])
   supplier        Supplier?        @relation(fields: [supplierId], references: [id])
   attachment      Attachment?      @relation(fields: [attachmentId], references: [id])

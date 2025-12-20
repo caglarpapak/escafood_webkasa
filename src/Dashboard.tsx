@@ -17,6 +17,7 @@ import { getNextBelgeNo } from './utils/documentNo';
 import { generateId } from './utils/id';
 import { getCreditCardNextDue } from './utils/creditCard';
 import { apiGet, apiPost, apiDelete } from './utils/api';
+import { computeRunningBalance, BalanceContext } from './utils/balance';
 import NakitGiris, { NakitGirisFormValues } from './forms/NakitGiris';
 import NakitCikis, { NakitCikisFormValues } from './forms/NakitCikis';
 import BankaNakitGiris, { BankaNakitGirisFormValues } from './forms/BankaNakitGiris';
@@ -178,6 +179,11 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   // Dashboard summary state (authoritative balance source)
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  
+  // FINANCIAL INVARIANT: Balance context for "Gün İçi İşlemler" table
+  // Default: KASA (cash balance) - only source=KASA transactions affect this balance
+  const [balanceContext, setBalanceContext] = useState<BalanceContext>({ type: 'KASA' });
+  const [selectedBankForBalance, setSelectedBankForBalance] = useState<string>('');
 
   // Fix Bug 6: Fetch credit cards from backend on mount
   useEffect(() => {
@@ -371,12 +377,20 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     }
   }, []);
 
-  // Load dashboard summary (authoritative balance source)
+  // Load dashboard summary (authoritative balance source + upcoming payments)
   const loadDashboardSummary = async () => {
     setSummaryLoading(true);
     try {
       const summaryData = await apiGet<DashboardSummary>('/api/dashboard/summary');
+      
       setSummary(summaryData);
+      
+      // NUCLEAR FIX: Use backend summary as single source of truth
+      if (summaryData.upcomingPayments) {
+        setUpcomingPayments(summaryData.upcomingPayments);
+      } else {
+        setUpcomingPayments([]);
+      }
     } catch (error: any) {
       console.error('Failed to load dashboard summary:', error);
       // If backend is not running, don't show error to user - just use null
@@ -384,6 +398,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         console.warn('Backend server appears to be down. Dashboard summary will be unavailable until server is started.');
       }
       setSummary(null);
+      setUpcomingPayments([]); // Fallback to empty array on error
     } finally {
       setSummaryLoading(false);
     }
@@ -429,12 +444,55 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           console.error('Failed to refresh transactions:', error);
         }
       })(),
+      // HEDEF-1 FIX: Refresh loans state so upcoming payments update immediately after loan payment
+      (async () => {
+        try {
+          const backendLoans = await apiGet<Loan[]>('/api/loans');
+          setLoans(backendLoans);
+        } catch (error: any) {
+          console.error('Failed to refresh loans:', error);
+          // Don't show error to user - just log it
+        }
+      })(),
     ]);
   };
 
   // Load dashboard summary on mount
   useEffect(() => {
     loadDashboardSummary();
+  }, []);
+
+  // SINGLE SOURCE OF TRUTH FIX: Load cheques from backend on mount
+  // This ensures cheques are available in reports and module from the start
+  useEffect(() => {
+    const loadCheques = async () => {
+      try {
+        // Backend returns ChequeListResponse with items array
+        const response = await apiGet<{ items: any[]; totalCount: number }>('/api/cheques');
+        // Map backend DTO to frontend Cheque format
+        const mappedCheques: Cheque[] = response.items.map((c) => ({
+          id: c.id,
+          cekNo: c.cekNo,
+          tutar: c.amount,
+          vadeTarihi: c.maturityDate,
+          bankaId: c.bankId || undefined,
+          bankaAdi: '', // Will be populated from banks prop if needed
+          duzenleyen: c.customer?.name || c.supplier?.name || '',
+          lehtar: c.supplier?.name || c.customer?.name || `Çek ${c.cekNo}`,
+          musteriId: c.customerId || undefined,
+          tedarikciId: c.supplierId || undefined,
+          direction: c.direction,
+          status: c.status as any,
+          kasaMi: c.status === 'KASADA',
+          aciklama: c.description || undefined,
+        }));
+        setCheques(mappedCheques);
+      } catch (error) {
+        console.error('Failed to load cheques from backend:', error);
+        setCheques([]);
+      }
+    };
+    loadCheques();
   }, []);
 
   // Fetch today's transactions from backend
@@ -485,83 +543,9 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     fetchTodaysTransactions();
   }, []);
 
-  // BUG-2 FIX: Single source of truth - buildUpcomingPayments derives from state
-  // No ref hacks, no manual patches - just pure derivation
-  const buildUpcomingPayments = useMemo(() => {
-    const payments: UpcomingPayment[] = [];
-    const today = todayIso();
-
-    // Credit cards with debt
-    creditCards
-      .filter((c) => c.aktifMi && (c.sonEkstreBorcu > 0 || (c.guncelBorc !== null && c.guncelBorc !== undefined && c.guncelBorc > 0)))
-      .forEach((card) => {
-        const amount = card.sonEkstreBorcu > 0 ? card.sonEkstreBorcu : (card.guncelBorc || 0);
-        const { dueIso, dueDisplay, daysLeft } = getCreditCardNextDue(card);
-        payments.push({
-          id: `cc-${card.id}`,
-          category: 'KREDI_KARTI',
-          bankName: banks.find((b) => b.id === card.bankaId)?.bankaAdi || '-',
-          name: card.kartAdi,
-          dueDateIso: dueIso,
-          dueDateDisplay: dueDisplay,
-          amount,
-          daysLeft,
-        });
-      });
-
-    // Cheques
-    cheques
-      .filter((c) => c.direction === 'BORC')
-      .filter((c) => ['KASADA', 'BANKADA_TAHSILDE', 'ODEMEDE'].includes(c.status))
-      .forEach((cek) => {
-        payments.push({
-          id: `cek-${cek.id}`,
-          category: 'CEK',
-          bankName: cek.bankaAdi || '-',
-          name: cek.lehtar,
-          dueDateIso: cek.vadeTarihi,
-          dueDateDisplay: isoToDisplay(cek.vadeTarihi),
-          amount: cek.tutar,
-          daysLeft: diffInDays(today, cek.vadeTarihi),
-        });
-      });
-
-    // BUG-2 FIX: Loans - only unpaid installments (status != ODEME_ALINDI)
-    loans
-      .filter((loan) => loan.isActive && loan.installments && loan.installments.length > 0)
-      .forEach((loan) => {
-        // Find upcoming installments: status = BEKLENIYOR or GECIKMIS (exclude ODEME_ALINDI)
-        const upcomingInstallments = loan.installments!.filter(
-          (inst) => inst.status === 'BEKLENIYOR' || inst.status === 'GECIKMIS'
-        );
-        
-        // Only show the next upcoming installment (earliest due date)
-        if (upcomingInstallments.length > 0) {
-          const nextInstallment = [...upcomingInstallments].sort((a, b) => 
-            a.dueDate.localeCompare(b.dueDate)
-          )[0];
-          
-          payments.push({
-            id: `loan-${loan.id}-${nextInstallment.installmentNumber}`,
-            category: 'KREDI',
-            bankName: loan.bank?.name || '-',
-            name: loan.name,
-            dueDateIso: nextInstallment.dueDate,
-            dueDateDisplay: isoToDisplay(nextInstallment.dueDate),
-            amount: nextInstallment.totalAmount,
-            daysLeft: diffInDays(today, nextInstallment.dueDate),
-          });
-        }
-      });
-
-    payments.sort((a, b) => a.daysLeft - b.daysLeft);
-    return payments;
-  }, [banks, creditCards, cheques, loans]); // Derived from state - automatically updates when state changes
-
-  // BUG-2 FIX: Update upcomingPayments state when buildUpcomingPayments changes
-  useEffect(() => {
-    setUpcomingPayments(buildUpcomingPayments);
-  }, [buildUpcomingPayments]);
+  // UPCOMING PAYMENTS FIX: Backend summary is now the single source of truth
+  // Removed buildUpcomingPayments useMemo - upcoming payments come directly from backend summary
+  // This eliminates stale state issues when loan installments are paid
 
   // BUG-A FIX: Use backend summary as single source of truth for bank balances
   // Backend calculates bankDelta sum correctly (including POS_KOMISYONU negative values)
@@ -616,6 +600,49 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     () => dailyTransactions.filter((tx) => tx.isoDate === today),
     [dailyTransactions, today]
   );
+
+  // FINANCIAL INVARIANT: Compute context-aware running balance for today's transactions
+  // This ensures credit card transactions don't affect KASA balance
+  const todaysBalanceMap = useMemo(() => {
+    // Sort transactions chronologically (by createdAtIso or isoDate)
+    const sorted = [...todaysTransactions].sort((a, b) => {
+      const aCreated = a.createdAtIso || a.isoDate + 'T00:00:00';
+      const bCreated = b.createdAtIso || b.isoDate + 'T00:00:00';
+      return aCreated.localeCompare(bCreated);
+    });
+    
+    // Get initial balance based on context
+    let initialBalance = 0;
+    if (balanceContext.type === 'KASA') {
+      // For KASA context, initial balance is the cash balance before today
+      // We need to calculate from all KASA transactions before today
+      const beforeToday = dailyTransactions
+        .filter(tx => tx.isoDate < today && tx.source === 'KASA')
+        .sort((a, b) => {
+          const aCreated = a.createdAtIso || a.isoDate + 'T00:00:00';
+          const bCreated = b.createdAtIso || b.isoDate + 'T00:00:00';
+          return aCreated.localeCompare(bCreated);
+        });
+      initialBalance = beforeToday.reduce((sum, tx) => sum + (tx.incoming || 0) - (tx.outgoing || 0), BASE_CASH_BALANCE);
+    } else if (balanceContext.type === 'BANKA') {
+      // For bank context, initial balance is opening balance + all bankDelta before today
+      const bank = banks.find(b => b.id === balanceContext.bankId);
+      const openingBalance = bank?.acilisBakiyesi || 0;
+      const beforeToday = dailyTransactions
+        .filter(tx => tx.isoDate < today && tx.bankId === balanceContext.bankId && tx.bankDelta !== undefined && tx.bankDelta !== null)
+        .reduce((sum, tx) => sum + (tx.bankDelta || 0), 0);
+      initialBalance = openingBalance + beforeToday;
+    } else if (balanceContext.type === 'BANKA_TOPLAM') {
+      // For total bank context, sum all opening balances + all bankDelta before today
+      const totalOpening = banks.filter(b => b.aktifMi).reduce((sum, b) => sum + (b.acilisBakiyesi || 0), 0);
+      const beforeToday = dailyTransactions
+        .filter(tx => tx.isoDate < today && tx.bankDelta !== undefined && tx.bankDelta !== null)
+        .reduce((sum, tx) => sum + (tx.bankDelta || 0), 0);
+      initialBalance = totalOpening + beforeToday;
+    }
+    
+    return computeRunningBalance(sorted, balanceContext, initialBalance);
+  }, [todaysTransactions, balanceContext, dailyTransactions, today, banks]);
 
   const toggleSection = (key: string) => {
     setOpenSection((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -1178,21 +1205,62 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       let description = aciklama;
 
 
-        // BUG 7 FIX: Handle cheque payment - get cheque info and supplier
-        let chequeToUpdate: { id: string; supplierId: string | null } | null = null;
+      // FIX: For cheque payment, use the new /api/cheques/:id/pay endpoint
+      // This endpoint handles both transaction creation and cheque status update atomically
       if (values.islemTuru === 'CEK_ODEME' && values.cekId) {
+        try {
+          const payResponse = await apiPost<{
+            ok: boolean;
+            paidChequeId: string;
+            transactionId: string;
+            updatedCheque: {
+              id: string;
+              status: string;
+              paidAt: string | null;
+              paidBankId: string | null;
+              paymentTransactionId: string | null;
+            };
+          }>(`/api/cheques/${values.cekId}/pay`, {
+            bankId: normalizedBankId,
+            paymentDate: values.islemTarihiIso,
+            note: values.aciklama || null,
+          });
+
+          if (payResponse.ok) {
+            // Update local cheque state
+            setCheques((prev) =>
+              prev.map((c) => 
+                c.id === payResponse.paidChequeId 
+                  ? { ...c, status: 'ODENDI' as ChequeStatus }
+                  : c
+              )
+            );
+
+            // Refresh summary and transactions
+            await refreshAll();
+            setOpenForm(null);
+            return; // Exit early - payment is complete
+          }
+        } catch (chequePayError: any) {
+          console.error('Failed to pay cheque:', chequePayError);
+          alert(chequePayError?.errorData?.message || 'Çek ödeme işlemi başarısız oldu');
+          return;
+        }
+      }
+
+      // Legacy cheque handling (if not using new endpoint)
+      let chequeToUpdate: { id: string; supplierId: string | null } | null = null;
+      if (values.islemTuru === 'CEK_ODEME' && values.cekId && !chequeToUpdate) {
         const cheque = cheques.find((c) => c.id === values.cekId);
         if (cheque) {
           tutar = cheque.tutar;
-            // BUG 7 FIX: Use supplierId from form if provided, otherwise from cheque
-            const supplierId = values.supplierId || cheque.tedarikciId || null;
-            const supplier = supplierId ? suppliers.find((s) => s.id === supplierId) : undefined;
+          const supplierId = values.supplierId || cheque.tedarikciId || null;
+          const supplier = supplierId ? suppliers.find((s) => s.id === supplierId) : undefined;
           counterparty = supplier ? `${supplier.kod} - ${supplier.ad}` : cheque.lehtar || counterparty;
           description = `Çek No: ${cheque.cekNo}${values.aciklama ? ` – ${values.aciklama}` : ''}`;
-            // BUG 7 FIX: Store cheque info to update status after transaction is created
-            chequeToUpdate = { id: values.cekId, supplierId };
-          }
+          chequeToUpdate = { id: values.cekId, supplierId };
         }
+      }
 
       if (values.islemTuru === 'KREDI_KARTI_ODEME' && values.krediKartiId) {
         const card = creditCards.find((c) => c.id === values.krediKartiId);
@@ -1219,6 +1287,25 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                 bankDelta: number;
                 outgoing: number;
               };
+              // CREDIT CARD EKSTRE ÖDEME FIX: Include updated credit card in response
+              creditCard: {
+                id: string;
+                name: string;
+                bankId: string | null;
+                limit: number | null;
+                closingDay: number | null;
+                dueDay: number | null;
+                sonEkstreBorcu: number;
+                manualGuncelBorc: number | null;
+                isActive: boolean;
+                currentDebt: number;
+                availableLimit: number | null;
+                lastOperationDate: string | null;
+                bank: {
+                  id: string;
+                  name: string;
+                } | null;
+              };
             }>('/api/credit-cards/payment', {
               creditCardId: values.krediKartiId,
           isoDate: values.islemTarihiIso,
@@ -1227,6 +1314,30 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
               paymentSource: 'BANKA', // Always from bank in this flow
               bankId: values.bankaId || null,
             });
+
+            // CREDIT CARD EKSTRE ÖDEME FIX: Update credit cards state with response from backend
+            // This ensures frontend state is immediately consistent with backend's updated debt values
+            if (response.creditCard) {
+              const updatedCard: CreditCard = {
+                id: response.creditCard.id,
+                bankaId: response.creditCard.bankId || '',
+                kartAdi: response.creditCard.name,
+                limit: response.creditCard.limit,
+                hesapKesimGunu: response.creditCard.closingDay,
+                sonOdemeGunu: response.creditCard.dueDay,
+                sonEkstreBorcu: response.creditCard.sonEkstreBorcu,
+                guncelBorc: response.creditCard.manualGuncelBorc !== null 
+                  ? response.creditCard.manualGuncelBorc 
+                  : response.creditCard.currentDebt,
+                kullanilabilirLimit: response.creditCard.availableLimit,
+                aktifMi: response.creditCard.isActive,
+              };
+              
+              // Update credit cards state
+              setCreditCards((prev) => 
+                prev.map((c) => (c.id === updatedCard.id ? updatedCard : c))
+              );
+            }
 
             // Map backend transaction to frontend format
             const tx: DailyTransaction = {
@@ -1258,10 +1369,13 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           }
         }
 
-      // Handle loan payment
-      if (values.islemTuru === 'KREDI_ODEME' && values.loanId && values.installmentId) {
+      // LOAN PAYMENT FIX: Handle loan payment via new endpoint (loanId only, no installmentId)
+      if (values.islemTuru === 'KREDI_ODEME' && values.loanId) {
         try {
           const response = await apiPost<{
+            ok: boolean;
+            paidLoanId: string;
+            paidInstallmentId: string;
             loan: any;
             transaction: {
               id: string;
@@ -1272,21 +1386,67 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
               bankDelta: number;
               outgoing: number;
             };
-          }>(`/api/loans/${values.loanId}/installments/${values.installmentId}/pay`, {
+          }>(`/api/loans/${values.loanId}/pay-next-installment`, {
+            bankId: values.bankaId,
             isoDate: values.islemTarihiIso,
-            description: values.aciklama || null,
+            note: values.aciklama || null,
           });
 
-          // BUG-B FIX: Update loans state FIRST (before refreshAll) to ensure upcoming payments update immediately
-          // The response.loan already contains updated installment status from backend
-          // But we need to fetch all loans to get complete state
-          const updatedLoans = await apiGet<Loan[]>('/api/loans');
-          
-          // CRITICAL: Update loans state immediately so buildUpcomingPayments recalculates
-          setLoans(updatedLoans);
-          
-          // Then refresh summary and transactions
+          // LOAN PAYMENT FIX: Verify payment was successful
+          if (!response.ok || !response.paidInstallmentId) {
+            throw new Error(`Payment failed: ${response.paidInstallmentId || 'unknown error'}`);
+          }
+
+          // LOAN PAYMENT FIX: Hard refresh after successful payment
           await refreshAll();
+          
+          // Then refresh transactions and loans in parallel (but summary already updated)
+          await Promise.all([
+            (async () => {
+              try {
+                const today = todayIso();
+                const response = await apiGet<{ items: any[]; totalCount: number }>(
+                  `/api/transactions?from=${today}&to=${today}&sortKey=isoDate&sortDir=asc`
+                );
+                const mapped = response.items.map((tx) => ({
+                  id: tx.id,
+                  isoDate: tx.isoDate,
+                  displayDate: isoToDisplay(tx.isoDate),
+                  documentNo: tx.documentNo || '',
+                  type: tx.type,
+                  source: tx.source,
+                  counterparty: tx.counterparty || '',
+                  description: tx.description || '',
+                  incoming: Number(tx.incoming) ?? 0,
+                  outgoing: Number(tx.outgoing) ?? 0,
+                  balanceAfter: Number(tx.balanceAfter) ?? 0,
+                  bankId: tx.bankId || undefined,
+                  bankDelta: tx.bankDelta !== undefined && tx.bankDelta !== null ? Number(tx.bankDelta) : undefined,
+                  displayIncoming: tx.displayIncoming || undefined,
+                  displayOutgoing: tx.displayOutgoing || undefined,
+                  createdAtIso: tx.createdAt,
+                  createdBy: tx.createdBy,
+                }));
+                
+                const sorted = [...mapped].sort((a, b) => {
+                  const aCreated = a.createdAtIso || a.isoDate + 'T00:00:00';
+                  const bCreated = b.createdAtIso || b.isoDate + 'T00:00:00';
+                  return aCreated.localeCompare(bCreated);
+                });
+                setDailyTransactions(sorted);
+              } catch (error) {
+                console.error('Failed to refresh transactions:', error);
+              }
+            })(),
+            (async () => {
+              try {
+                const backendLoans = await apiGet<Loan[]>('/api/loans');
+                setLoans(backendLoans);
+              } catch (error: any) {
+                console.error('Failed to refresh loans:', error);
+              }
+            })(),
+          ]);
           
           setOpenForm(null);
           return;
@@ -1372,7 +1532,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           createdBy: response.createdBy,
         };
 
-      // BUG 7 FIX: Update cheque status to ODEMEDE and set supplierId after transaction is created
+      // Legacy cheque status update (should not be reached if new endpoint is used)
       if (chequeToUpdate) {
         try {
           await apiPut<{
@@ -1380,9 +1540,9 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             status: string;
             supplierId: string | null;
           }>(`/api/cheques/${chequeToUpdate.id}/status`, {
-            newStatus: 'ODEMEDE', // BUG 7 FIX: Status should be ODEMEDE when cheque is given to supplier
+            newStatus: 'ODENDI', // FIX: Status should be ODENDI when cheque is paid from bank
             isoDate: values.islemTarihiIso,
-            supplierId: chequeToUpdate.supplierId, // BUG 7 FIX: Set supplierId when cheque is given to supplier
+            supplierId: chequeToUpdate.supplierId,
             description: description || null,
           });
           
@@ -1390,7 +1550,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           setCheques((prev) =>
             prev.map((c) => 
               c.id === chequeToUpdate.id 
-                ? { ...c, status: 'ODEMEDE', kasaMi: false, tedarikciId: chequeToUpdate.supplierId || undefined }
+                ? { ...c, status: 'ODENDI' as ChequeStatus, kasaMi: false, tedarikciId: chequeToUpdate.supplierId || undefined }
                 : c
             )
           );
@@ -1787,12 +1947,45 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     }
   };
 
-  const handleCekIslemSaved = (payload: CekIslemPayload) => {
+  // SINGLE SOURCE OF TRUTH FIX: After cheque operations, refresh from backend
+  // This ensures all screens (upcoming, dropdown, reports, module) see the same data
+  const handleCekIslemSaved = async (payload: CekIslemPayload) => {
+    // Update local state immediately for UI responsiveness
     setCheques(payload.updatedCheques);
     if (payload.transaction) {
       addTransactions([payload.transaction]);
     }
     setOpenForm(null);
+    
+    // CRITICAL: Refresh from backend to ensure single source of truth
+    // This ensures upcoming payments, dropdown, and reports all see the same data
+    try {
+      // Backend returns ChequeListResponse with items array
+      const response = await apiGet<{ items: any[]; totalCount: number }>('/api/cheques');
+      // Map backend DTO to frontend Cheque format
+      const mappedCheques: Cheque[] = response.items.map((c) => ({
+        id: c.id,
+        cekNo: c.cekNo,
+        tutar: c.amount,
+        vadeTarihi: c.maturityDate,
+        bankaId: c.bankId || undefined,
+        bankaAdi: '', // Will be populated from banks prop if needed
+        duzenleyen: c.customer?.name || c.supplier?.name || '',
+        lehtar: c.supplier?.name || c.customer?.name || `Çek ${c.cekNo}`,
+        musteriId: c.customerId || undefined,
+        tedarikciId: c.supplierId || undefined,
+        direction: c.direction,
+        status: c.status as any,
+        kasaMi: c.status === 'KASADA',
+        aciklama: c.description || undefined,
+      }));
+      setCheques(mappedCheques);
+      // Also refresh summary to update upcoming payments (single source of truth)
+      await loadDashboardSummary();
+    } catch (error) {
+      console.error('Failed to refresh cheques from backend:', error);
+      // Keep local state if refresh fails
+    }
   };
 
   const removeTransaction = async (id: string) => {
@@ -2084,7 +2277,12 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                         <tr key={p.id} className="border-b last:border-0">
                           <td className="py-2 px-2">{p.category}</td>
                           <td className="py-2 px-2">{p.bankName}</td>
-                          <td className="py-2 px-2">{p.name}</td>
+                          <td className="py-2 px-2">
+                            {p.name}
+                            {p.installmentId && (
+                              <span className="text-[10px] text-slate-400 ml-1">({p.installmentId.slice(0, 8)})</span>
+                            )}
+                          </td>
                           <td className="py-2 px-2">{p.dueDateDisplay}</td>
                           <td className="py-2 px-2">{formatTl(p.amount)}</td>
                           <td className={`py-2 px-2 ${color}`}>{p.daysLeft}</td>
@@ -2099,9 +2297,41 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             <div className="card p-4">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-lg font-semibold">Gün İçi İşlemler</div>
-                <div className="text-sm text-slate-600 flex items-center space-x-2">
-                  <span>{todayDisplay}</span>
-                  <span className="text-orange-500 capitalize">{weekday}</span>
+                <div className="flex items-center gap-3">
+                  {/* FINANCIAL INVARIANT: Balance context selector */}
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-slate-600">Bakiye Türü:</label>
+                    <select
+                      className="text-xs border border-slate-300 rounded px-2 py-1"
+                      value={balanceContext.type === 'BANKA' ? `BANKA_${balanceContext.bankId}` : balanceContext.type}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === 'KASA') {
+                          setBalanceContext({ type: 'KASA' });
+                          setSelectedBankForBalance('');
+                        } else if (value === 'BANKA_TOPLAM') {
+                          setBalanceContext({ type: 'BANKA_TOPLAM' });
+                          setSelectedBankForBalance('');
+                        } else if (value.startsWith('BANKA_')) {
+                          const bankId = value.replace('BANKA_', '');
+                          setBalanceContext({ type: 'BANKA', bankId });
+                          setSelectedBankForBalance(bankId);
+                        }
+                      }}
+                    >
+                      <option value="KASA">Kasa Bakiyesi</option>
+                      <option value="BANKA_TOPLAM">Tüm Bankalar Toplam</option>
+                      {banks.filter(b => b.aktifMi).map(b => (
+                        <option key={b.id} value={`BANKA_${b.id}`}>
+                          {b.bankaAdi}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="text-sm text-slate-600 flex items-center space-x-2">
+                    <span>{todayDisplay}</span>
+                    <span className="text-orange-500 capitalize">{weekday}</span>
+                  </div>
                 </div>
               </div>
               <div className="overflow-auto">
@@ -2171,7 +2401,10 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                               ? formatTl(tx.outgoing) 
                               : '-'}
                         </td>
-                        <td className="py-2 px-2 text-right font-semibold">{formatTl(tx.balanceAfter)}</td>
+                        <td className="py-2 px-2 text-right font-semibold">
+                          {/* FINANCIAL INVARIANT: Use context-aware balance, not tx.balanceAfter */}
+                          {formatTl(todaysBalanceMap.get(tx.id) ?? (balanceContext.type === 'KASA' ? cashBalance : 0))}
+                        </td>
                         <td className="py-2 px-2 text-right">
                           <button
                             className="text-rose-600 hover:underline"

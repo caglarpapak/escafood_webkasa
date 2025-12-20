@@ -7,6 +7,9 @@ import {
   ChequeListQuery,
   ChequeListResponse,
   ChequeDto,
+  PayableChequeDto,
+  PayChequeDto,
+  PayChequeResponse,
 } from './cheques.types';
 
 /**
@@ -48,9 +51,14 @@ function isStatusTransitionAllowed(
     return allowedTransitions.includes(newStatus);
   } else {
     // For BORC cheques:
-    // ODEMEDE → TAHSIL_EDILDI (paid)
-    if (currentStatus === 'ODEMEDE' && newStatus === 'TAHSIL_EDILDI') {
-      return true;
+    // KASADA → ODENDI (paid directly from bank)
+    // BANKADA_TAHSILDE → ODENDI (paid from bank)
+    // ODEMEDE → ODENDI (paid)
+    // TAHSIL_EDILDI → ODENDI (legacy: already collected, now paid)
+    if (newStatus === 'ODENDI') {
+      if (currentStatus === 'KASADA' || currentStatus === 'BANKADA_TAHSILDE' || currentStatus === 'ODEMEDE' || currentStatus === 'TAHSIL_EDILDI') {
+        return true;
+      }
     }
     return false;
   }
@@ -58,19 +66,23 @@ function isStatusTransitionAllowed(
 
 /**
  * Calculate cash balance after a transaction
- * Gets all transactions up to this date (excluding the one being created),
- * calculates balance, then adds the new transaction's incoming/outgoing
+ * FINANCIAL INVARIANT: Only KASA transactions affect cash balance
+ * 
+ * Gets all KASA transactions up to this date (excluding the one being created),
+ * calculates balance, then adds the new transaction's incoming/outgoing if it's KASA
  */
 async function calculateBalanceAfter(
   isoDate: string,
   incoming: number,
   outgoing: number,
+  storedSource: string,
   excludeTransactionId?: string
 ): Promise<number> {
-  // Get all non-deleted transactions up to this date
+  // FINANCIAL INVARIANT: Only KASA transactions affect cash balance
   const where: any = {
     deletedAt: null,
     isoDate: { lte: isoDate },
+    source: 'KASA', // Only include KASA transactions in cash balance calculation
   };
 
   if (excludeTransactionId) {
@@ -79,20 +91,26 @@ async function calculateBalanceAfter(
 
   const transactions = await prisma.transaction.findMany({
     where,
+    select: {
+      incoming: true,
+      outgoing: true,
+    },
     orderBy: [
       { isoDate: 'asc' },
       { createdAt: 'asc' },
     ],
   });
 
-  // Calculate balance up to this point
+  // Calculate balance up to this point (only KASA transactions)
   let balance = 0;
   for (const tx of transactions) {
     balance += Number(tx.incoming) - Number(tx.outgoing);
   }
 
-  // Add the new transaction's effect
-  balance += incoming - outgoing;
+  // Add the new transaction's effect only if it's a KASA transaction
+  if (storedSource === 'KASA') {
+    balance += incoming - outgoing;
+  }
 
   return balance;
 }
@@ -116,7 +134,8 @@ async function createChequeTransaction(
   displayOutgoing: number | null,
   createdBy: string
 ): Promise<string> {
-  const balanceAfter = await calculateBalanceAfter(isoDate, incoming, outgoing);
+  // FINANCIAL INVARIANT: Only KASA transactions affect cash balance
+  const balanceAfter = await calculateBalanceAfter(isoDate, incoming, outgoing, source);
 
   const transaction = await prisma.transaction.create({
     data: {
@@ -144,9 +163,15 @@ async function createChequeTransaction(
 export class ChequesService {
   /**
    * Create a new cheque
+   * 
+   * STANDARD CONTRACT:
+   * - ALACAK (customer cheque): status = KASADA
+   * - BORC (supplier cheque): status = ODEMEDE
+   * - deletedAt = null (always)
+   * - All required fields must be set (cekNo, amount, entryDate, maturityDate, direction)
    */
   async createCheque(data: CreateChequeDto, createdBy: string): Promise<ChequeDto> {
-    const defaultStatus = getDefaultStatus(data.direction);
+    const defaultStatus = getDefaultStatus(data.direction); // STANDARD CONTRACT: ALACAK → KASADA, BORC → ODEMEDE
 
     // Validate and set customerId, supplierId, bankId based on direction
     let customerId: string | null = null;
@@ -589,7 +614,8 @@ export class ChequesService {
       deletedAt: null,
     };
 
-    if (query.status) {
+    // FIX: Support status filter - if status is provided, use it; if "ALL", show all (no filter)
+    if (query.status && query.status !== 'ALL') {
       where.status = query.status;
     }
 
@@ -742,6 +768,212 @@ export class ChequesService {
       customer: cheque.customer || null,
       supplier: cheque.supplier || null,
     };
+  }
+
+  /**
+   * Get payable cheques (BORC direction, not paid yet)
+   * Used for bank cash out cheque payment dropdown
+   * 
+   * STANDARD FILTER CONTRACT:
+   * - deletedAt = null (active only)
+   * - direction = BORC (we pay them)
+   * - status != ODENDI (not paid yet)
+   * - maturityDate >= todayStart (upcoming or today)
+   */
+  async getPayableCheques(bankId?: string | null): Promise<PayableChequeDto[]> {
+    // Calculate todayStart (Date object, normalized to start of day)
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayStartIso = todayStart.toISOString().split('T')[0];
+    
+    const where: any = {
+      deletedAt: null, // Active cheques only
+      direction: 'BORC', // Only BORC cheques (we pay them)
+      status: { not: 'ODENDI' }, // Not paid yet
+      maturityDate: { gte: todayStartIso }, // Upcoming or today (STANDARD CONTRACT)
+    };
+
+    // SINGLE SOURCE OF TRUTH FIX: Filter by bankId if provided
+    // This ensures only cheques for the selected bank are shown in dropdown
+    if (bankId) {
+      where.bankId = bankId;
+    }
+
+    const cheques = await prisma.cheque.findMany({
+      where,
+      include: {
+        supplier: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        customer: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        bank: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: [
+        { maturityDate: 'asc' },
+        { createdAt: 'asc' },
+      ],
+      take: 200,
+    });
+
+    return cheques.map((cheque) => ({
+      id: cheque.id,
+      cekNo: cheque.cekNo,
+      maturityDate: cheque.maturityDate,
+      amount: cheque.amount.toNumber(),
+      counterparty: cheque.supplier?.name || cheque.customer?.name || `Çek ${cheque.cekNo}`,
+      bankId: cheque.bankId,
+    }));
+  }
+
+  /**
+   * Pay a cheque from bank (atomic transaction)
+   * Creates transaction and updates cheque status in a single DB transaction
+   */
+  async payCheque(chequeId: string, data: PayChequeDto, createdBy: string): Promise<PayChequeResponse> {
+    return await prisma.$transaction(async (tx) => {
+      // 1. Find and validate cheque
+      const cheque = await tx.cheque.findUnique({
+        where: { id: chequeId },
+        include: {
+          supplier: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          customer: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+      if (!cheque) {
+        throw new Error('Çek bulunamadı');
+      }
+
+      if (cheque.deletedAt) {
+        throw new Error('Silinmiş çek ödenemez');
+      }
+
+      if (cheque.direction !== 'BORC') {
+        throw new Error('Sadece BORC çekler ödenebilir');
+      }
+
+      if (cheque.status === 'ODENDI') {
+        throw new Error('Bu çek zaten ödenmiş');
+      }
+
+      // 2. Generate document number (BNK-CKS format: BNK-CKS-DD/MM-XXXX)
+      const [year, month, day] = data.paymentDate.split('-');
+      const gg = (day ?? '01').padStart(2, '0');
+      const aa = (month ?? '01').padStart(2, '0');
+      const prefix = `BNK-CKS-${gg}/${aa}-`;
+      
+      // Find existing transactions with same prefix on the same date
+      const existingTransactions = await tx.transaction.findMany({
+        where: {
+          deletedAt: null,
+          isoDate: data.paymentDate,
+          documentNo: { startsWith: prefix },
+        },
+        select: { documentNo: true },
+      });
+      
+      // Find max sequence number
+      const maxSeq = existingTransactions.reduce((max, tx) => {
+        if (!tx.documentNo || !tx.documentNo.startsWith(prefix)) return max;
+        const suffix = tx.documentNo.slice(prefix.length);
+        const n = parseInt(suffix, 10);
+        return Number.isNaN(n) ? max : Math.max(max, n);
+      }, 0);
+      
+      // Generate next document number
+      const nextSeq = String(maxSeq + 1).padStart(4, '0');
+      const documentNo = `${prefix}${nextSeq}`;
+
+      // 3. Create transaction
+      const amount = cheque.amount.toNumber();
+      const counterparty = cheque.supplier?.name || cheque.customer?.name || `Çek ${cheque.cekNo}`;
+      // Include supplier name in description if available
+      const supplierName = cheque.supplier?.name ? ` - ${cheque.supplier.name}` : '';
+      const description = data.note || `Çek No: ${cheque.cekNo}${supplierName}`;
+
+      // FINANCIAL INVARIANT: Bank cash out - only affects bank balance, not cash
+      const balanceAfter = await calculateBalanceAfter(data.paymentDate, 0, 0, 'BANKA');
+
+      const transaction = await tx.transaction.create({
+        data: {
+          isoDate: data.paymentDate,
+          documentNo, // Generated document number
+          type: 'CEK_ODENMESI',
+          source: 'BANKA',
+          counterparty,
+          description,
+          incoming: 0,
+          outgoing: 0, // Bank cash out doesn't affect cash balance
+          bankDelta: -amount, // Negative: bank balance decreases
+          displayIncoming: null,
+          displayOutgoing: amount, // Show amount in UI
+          balanceAfter,
+          bankId: data.bankId,
+          chequeId: chequeId,
+          createdBy,
+        },
+      });
+
+      // 3. Update cheque status to ODENDI with payment details
+      // STANDARD CONTRACT: Cheque payment sets status=ODENDI, paidAt, paidBankId, paymentTransactionId
+      // deletedAt is NEVER set (soft delete is not used for paid cheques)
+      const paymentDate = new Date(data.paymentDate + 'T00:00:00Z');
+      const updatedCheque = await tx.cheque.update({
+        where: { id: chequeId },
+        data: {
+          status: 'ODENDI', // STANDARD CONTRACT: Paid cheques have status=ODENDI
+          paidAt: paymentDate,
+          paidBankId: data.bankId,
+          paymentTransactionId: transaction.id,
+          updatedAt: new Date(),
+          updatedBy: createdBy,
+          // CRITICAL: deletedAt is NOT set - paid cheques remain visible in reports
+        },
+        select: {
+          id: true,
+          status: true,
+          paidAt: true,
+          paidBankId: true,
+          paymentTransactionId: true,
+        },
+      });
+
+      return {
+        ok: true,
+        paidChequeId: chequeId,
+        transactionId: transaction.id,
+        updatedCheque: {
+          id: updatedCheque.id,
+          status: updatedCheque.status,
+          paidAt: updatedCheque.paidAt?.toISOString() || null,
+          paidBankId: updatedCheque.paidBankId,
+          paymentTransactionId: updatedCheque.paymentTransactionId,
+        },
+      };
+    });
   }
 }
 

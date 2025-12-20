@@ -176,6 +176,7 @@ export const createTransactionSchema = z
       'BANKA_KASA_TRANSFER',
       'KASA_BANKA_TRANSFER',
       'POS_TAHSILAT_BRUT',
+      'POS_KOMISYONU', // BUG B FIX: POS_KOMISYONU requires bankId (same bank as POS_TAHSILAT_BRUT)
       'KREDI_KARTI_EKSTRE_ODEME',
       'CEK_TAHSIL_BANKA',
     ];
@@ -216,6 +217,7 @@ export const createTransactionSchema = z
       'BANKA_KASA_TRANSFER',
       'KASA_BANKA_TRANSFER',
       'POS_TAHSILAT_BRUT',
+      'POS_KOMISYONU', // BUG B FIX: POS_KOMISYONU requires bankId (same bank as POS_TAHSILAT_BRUT)
       'KREDI_KARTI_EKSTRE_ODEME',
       'CEK_TAHSIL_BANKA',
     ];

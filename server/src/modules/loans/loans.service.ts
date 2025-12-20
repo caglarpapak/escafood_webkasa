@@ -1,7 +1,7 @@
 import { prisma } from '../../config/prisma';
 import { LoanRecord, LoanDto, LoanInstallmentRecord, LoanInstallmentDto, CreateLoanDTO, UpdateLoanDTO } from './loans.types';
 import { TransactionsService } from '../transactions/transactions.service';
-import { DailyTransactionType, DailyTransactionSource } from '@prisma/client';
+import { DailyTransactionType, DailyTransactionSource, LoanInstallmentStatus } from '@prisma/client';
 
 const transactionsService = new TransactionsService();
 
@@ -352,12 +352,30 @@ export class LoansService {
       throw new Error('Installment does not belong to this loan');
     }
 
-    if (installment.status === 'ODEME_ALINDI') {
+    // ROOT FIX C: Use Prisma enum for comparison
+    if (installment.status === LoanInstallmentStatus.ODEME_ALINDI) {
       throw new Error('Installment already paid');
     }
 
     if (installment.loan.deletedAt) {
       throw new Error('Loan has been deleted');
+    }
+
+    // DETERMINISTIC FIX: Fail-fast validation before transaction
+    // Verify installment exists and is not already paid
+    const inst = await prisma.loanInstallment.findFirst({
+      where: { id: installmentId, deletedAt: null },
+      select: { id: true, loanId: true, status: true },
+    });
+    
+    if (!inst) {
+      throw new Error(`Installment not found: ${installmentId}`);
+    }
+    if (inst.status === LoanInstallmentStatus.ODEME_ALINDI) {
+      throw new Error(`Installment already paid: ${installmentId}`);
+    }
+    if (inst.loanId !== loanId) {
+      throw new Error(`Installment does not belong to loan ${loanId}`);
     }
 
     // Atomic transaction: create transaction and update installment together
@@ -368,7 +386,6 @@ export class LoansService {
     // Calculate balance after (for KASA source, but this is BANKA so balanceAfter = 0 for cash)
     // For bank transactions, we don't calculate cash balance
     const balanceAfter = 0; // Bank transactions don't affect cash balance
-
 
     const result = await prisma.$transaction(async (tx) => {
       // Create transaction
@@ -398,23 +415,36 @@ export class LoansService {
         },
       });
 
-      // Update installment status
+      // DETERMINISTIC FIX: Update installment with paidAt as Date
       const updatedInstallment = await tx.loanInstallment.update({
         where: { id: installmentId },
         data: {
-          status: 'ODEME_ALINDI',
+          status: LoanInstallmentStatus.ODEME_ALINDI,
           paidDate: paymentDate,
           transactionId: transaction.id,
           updatedBy: createdBy,
           updatedAt: new Date(),
         },
+        select: {
+          id: true,
+          loanId: true,
+          status: true,
+          paidDate: true,
+        },
       });
 
-
-      return transaction;
+      return { transaction, updatedInstallment };
     });
 
-    const transaction = result;
+    const { transaction, updatedInstallment } = result;
+
+    // DETERMINISTIC FIX: Verify the correct installment was updated
+    if (updatedInstallment.id !== installmentId) {
+      throw new Error(`Installment ID mismatch: expected ${installmentId}, got ${updatedInstallment.id}`);
+    }
+    if (updatedInstallment.status !== LoanInstallmentStatus.ODEME_ALINDI) {
+      throw new Error(`Installment status not updated: expected ODEME_ALINDI, got ${updatedInstallment.status}`);
+    }
 
     // Return updated loan
     const loan = await this.getLoanById(loanId);
@@ -422,8 +452,142 @@ export class LoansService {
       throw new Error('Loan not found after payment');
     }
 
+    return { 
+      ok: true,
+      paidInstallmentId: updatedInstallment.id,
+      loan, 
+      transaction,
+    };
+  }
 
-    return { loan, transaction };
+  /**
+   * Pay the next (earliest) unpaid installment for a loan
+   * Used by Banka Nakit Çıkış when user only selects loan (not specific installment)
+   */
+  async payNextInstallment(
+    loanId: string,
+    bankId: string,
+    isoDate: string | null,
+    amount: number | null,
+    description: string | null,
+    createdBy: string
+  ): Promise<{ ok: boolean; paidLoanId: string; paidInstallmentId: string; loan: LoanDto; transaction: any }> {
+    // Verify loan exists and is active
+    const loan = await prisma.loan.findUnique({
+      where: { id: loanId },
+      include: {
+        bank: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (!loan || loan.deletedAt) {
+      throw new Error('Loan not found');
+    }
+    if (!loan.isActive) {
+      throw new Error('Loan is not active');
+    }
+
+    // Find next unpaid installment deterministically
+    const result = await prisma.$transaction(async (tx) => {
+      const nextInstallment = await tx.loanInstallment.findFirst({
+        where: {
+          loanId,
+          deletedAt: null,
+          status: { not: LoanInstallmentStatus.ODEME_ALINDI },
+        },
+        orderBy: [
+          { dueDate: 'asc' },
+          { createdAt: 'asc' },
+          { id: 'asc' },
+        ],
+      });
+
+      if (!nextInstallment) {
+        throw new Error('No unpaid installment found for this loan');
+      }
+
+      // Validate amount if provided
+      const paymentAmount = amount ?? nextInstallment.totalAmount.toNumber();
+      if (amount && Math.abs(amount - nextInstallment.totalAmount.toNumber()) > 0.01) {
+        throw new Error(`Amount mismatch: installment amount is ${nextInstallment.totalAmount.toNumber()}, provided amount is ${amount}`);
+      }
+
+      const paymentDate = isoDate || nextInstallment.dueDate;
+      const bankDelta = -paymentAmount;
+
+      // Create transaction
+      const transaction = await tx.transaction.create({
+        data: {
+          isoDate: paymentDate,
+          type: DailyTransactionType.KREDI_TAKSIT_ODEME,
+          source: DailyTransactionSource.BANKA,
+          counterparty: `Kredi Taksit Ödemesi - ${loan.name}`,
+          description: description || `Kredi taksit ödemesi - Taksit #${nextInstallment.installmentNumber}`,
+          incoming: 0,
+          outgoing: paymentAmount,
+          bankDelta: bankDelta,
+          displayIncoming: null,
+          displayOutgoing: paymentAmount,
+          balanceAfter: 0,
+          bankId: bankId,
+          loanInstallmentId: nextInstallment.id,
+          documentNo: null,
+          cashAccountId: null,
+          creditCardId: null,
+          chequeId: null,
+          customerId: null,
+          supplierId: null,
+          attachmentId: null,
+          createdBy,
+        },
+      });
+
+      // Update installment status
+      const updatedInstallment = await tx.loanInstallment.update({
+        where: { id: nextInstallment.id },
+        data: {
+          status: LoanInstallmentStatus.ODEME_ALINDI,
+          paidDate: paymentDate,
+          transactionId: transaction.id,
+          updatedBy: createdBy,
+          updatedAt: new Date(),
+        },
+        select: {
+          id: true,
+          loanId: true,
+          status: true,
+          paidDate: true,
+        },
+      });
+
+      return { transaction, updatedInstallment };
+    });
+
+    const { transaction, updatedInstallment } = result;
+
+    // Verify update was successful
+    if (updatedInstallment.status !== LoanInstallmentStatus.ODEME_ALINDI) {
+      throw new Error(`Installment status not updated: expected ODEME_ALINDI, got ${updatedInstallment.status}`);
+    }
+
+    // Return updated loan
+    const updatedLoan = await this.getLoanById(loanId);
+    if (!updatedLoan) {
+      throw new Error('Loan not found after payment');
+    }
+
+    return {
+      ok: true,
+      paidLoanId: loanId,
+      paidInstallmentId: updatedInstallment.id,
+      loan: updatedLoan,
+      transaction,
+    };
   }
 
   /**

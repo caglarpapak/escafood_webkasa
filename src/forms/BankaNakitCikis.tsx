@@ -36,8 +36,7 @@ export interface BankaNakitCikisFormValues {
   kaydedenKullanici: string;
   cekId?: string | null;
   krediKartiId?: string | null;
-  loanId?: string | null; // Loan ID for loan payment
-  installmentId?: string | null; // Installment ID for loan payment
+  loanId?: string | null; // Loan ID for loan payment (backend will find next unpaid installment)
   supplierId?: string | null; // Supplier ID for linking transaction
 }
 
@@ -102,15 +101,77 @@ export default function BankaNakitCikis({
   const [selectedChequeId, setSelectedChequeId] = useState('');
   const [krediKartiId, setKrediKartiId] = useState('');
   const [selectedLoanId, setSelectedLoanId] = useState('');
-  const [selectedInstallmentId, setSelectedInstallmentId] = useState('');
+  const [payableCheques, setPayableCheques] = useState<Array<{
+    id: string;
+    cekNo: string;
+    maturityDate: string;
+    amount: number;
+    counterparty: string;
+    bankId: string | null;
+  }>>([]);
+  const [loadingPayableCheques, setLoadingPayableCheques] = useState(false);
+  const isChequePayment = islemTuru === 'CEK_ODEME';
 
-  const eligibleCheques = useMemo(
-    () =>
-      chequeList.filter(
-        (c) => c.tedarikciId && (c.status === 'ODEMEDE' || c.status === 'BANKADA_TAHSILDE')
-      ),
-    [chequeList]
-  );
+  // SINGLE SOURCE OF TRUTH FIX: Fetch payable cheques from backend when cheque payment is selected
+  // This ensures we see the same data as dashboard upcoming payments
+  useEffect(() => {
+    if (isChequePayment && bankaId) {
+      setLoadingPayableCheques(true);
+      apiGet<Array<{
+        id: string;
+        cekNo: string;
+        maturityDate: string;
+        amount: number;
+        counterparty: string;
+        bankId: string | null;
+      }>>(`/api/cheques/payable?bankId=${bankaId}`)
+        .then((data) => {
+          setPayableCheques(data);
+        })
+        .catch((error) => {
+          console.error('Failed to fetch payable cheques:', error);
+          setPayableCheques([]);
+        })
+        .finally(() => {
+          setLoadingPayableCheques(false);
+        });
+    } else {
+      setPayableCheques([]);
+    }
+  }, [isChequePayment, bankaId]);
+
+  // FALLBACK: Use prop cheques if payableCheques is empty (for backward compatibility)
+  // But prefer backend payable cheques as single source of truth
+  const eligibleCheques = useMemo(() => {
+    // If we have payable cheques from backend, use them (map to Cheque format)
+    if (payableCheques.length > 0) {
+      return payableCheques.map((pc) => {
+        // Find matching cheque from prop for additional fields
+        const propCheque = chequeList.find((c) => c.id === pc.id);
+        return {
+          id: pc.id,
+          cekNo: pc.cekNo,
+          tutar: pc.amount,
+          vadeTarihi: pc.maturityDate,
+          direction: 'BORC' as const,
+          status: propCheque?.status || 'ODEMEDE' as any,
+          ...propCheque, // Include other fields from prop if available
+          // CRITICAL: Set lehtar and counterparty AFTER spread to override prop values
+          // Backend counterparty includes supplier/customer name (e.g., "Supplier Name" or "Çek 12345")
+          lehtar: pc.counterparty,
+          counterparty: pc.counterparty, // Store counterparty separately for easy access
+        } as Cheque & { counterparty?: string };
+      });
+    }
+    // Fallback to prop cheques (legacy behavior)
+    return chequeList.filter(
+      (c) => 
+        c.direction === 'BORC' && 
+        (c.status === 'KASADA' || c.status === 'ODEMEDE' || c.status === 'BANKADA_TAHSILDE') &&
+        c.status !== 'TAHSIL_EDILDI' &&
+        c.status !== 'KARSILIKSIZ'
+    );
+  }, [payableCheques, chequeList]);
 
   // Fix Bug 1: Show all active credit cards, not just those with krediKartiVarMi flag
   const eligibleCards = useMemo(
@@ -151,7 +212,6 @@ export default function BankaNakitCikis({
       setSelectedChequeId('');
       setKrediKartiId('');
       setSelectedLoanId('');
-      setSelectedInstallmentId('');
     }
   }, [isOpen]);
 
@@ -170,7 +230,8 @@ export default function BankaNakitCikis({
     return (loans || []).filter((loan) => loan.isActive && loan.bankId === bankaId && loan.installments && loan.installments.length > 0);
   }, [isLoanPayment, bankaId, loans]);
   
-  // Get next upcoming installment for selected loan
+  // LOAN PAYMENT FIX: Find next installment for UI display (tutar and aciklama auto-fill)
+  // Backend will find and pay the next installment, but we show it in UI for user confirmation
   const selectedLoan = useMemo(() => {
     if (!isLoanPayment || !selectedLoanId) return null;
     return eligibleLoans.find((l) => l.id === selectedLoanId) || null;
@@ -182,8 +243,21 @@ export default function BankaNakitCikis({
       (inst) => inst.status === 'BEKLENIYOR' || inst.status === 'GECIKMIS'
     );
     if (upcoming.length === 0) return null;
+    // Sort by dueDate to get the earliest one
     return [...upcoming].sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
   }, [selectedLoan]);
+
+  // Auto-fill tutar and aciklama when loan is selected
+  useEffect(() => {
+    if (isLoanPayment && nextInstallment && selectedLoanId) {
+      // Auto-fill tutar
+      setTutarText(formatTlPlain(nextInstallment.totalAmount));
+      // Auto-fill aciklama with loan name and installment number
+      const loanName = selectedLoan?.name || 'Kredi';
+      setAciklama(`${loanName} - Taksit #${nextInstallment.installmentNumber}`);
+      setDirty(true);
+    }
+  }, [isLoanPayment, nextInstallment, selectedLoanId, selectedLoan]);
 
   const handleClose = () => {
     if (dirty && !window.confirm('Kaydedilmemiş bilgiler var. Kapatmak istiyor musunuz?')) return;
@@ -202,15 +276,8 @@ export default function BankaNakitCikis({
       setTutarText(formatTlPlain(selectedCheque.tutar));
     }
     
-    if (isLoanPayment) {
-      if (!nextInstallment) {
-        alert('Ödenecek taksit bulunamadı.');
-        return;
-      }
-      tutar = nextInstallment.totalAmount;
-      setTutarText(formatTlPlain(nextInstallment.totalAmount));
-      setSelectedInstallmentId(nextInstallment.id);
-    }
+    // LOAN PAYMENT FIX: Backend will find next unpaid installment automatically
+    // No need to validate or set installmentId here
     
     if (isCardPayment) {
       if (!selectedCard) return;
@@ -227,8 +294,8 @@ export default function BankaNakitCikis({
     if (faturaRequired && !faturaMuhatabi) return;
     if (hedefRequired && !hedefBankaId) return;
     if (isCardPayment && !krediKartiId) return;
-    if (isLoanPayment && (!selectedLoanId || !nextInstallment)) {
-      alert('Kredi ve taksit seçmelisiniz.');
+    if (isLoanPayment && !selectedLoanId) {
+      alert('Kredi seçmelisiniz.');
       return;
     }
     if (islemTarihiIso > today) {
@@ -282,7 +349,6 @@ export default function BankaNakitCikis({
       cekId: islemTuru === 'CEK_ODEME' ? selectedChequeId : null,
       krediKartiId: isCardPayment ? krediKartiId : null,
       loanId: isLoanPayment ? selectedLoanId : null,
-      installmentId: isLoanPayment ? selectedInstallmentId : null,
       supplierId: islemTuru === 'TEDARIKCI_ODEME' ? muhatapId : null,
     });
     
@@ -300,7 +366,6 @@ export default function BankaNakitCikis({
     setSelectedChequeId('');
     setKrediKartiId('');
     setSelectedLoanId('');
-    setSelectedInstallmentId('');
   };
 
   if (!isOpen) return null;
@@ -370,7 +435,6 @@ export default function BankaNakitCikis({
                 setSelectedChequeId('');
                 setKrediKartiId('');
                 setSelectedLoanId('');
-                setSelectedInstallmentId('');
                 if (next !== 'CEK_ODEME' && next !== 'KREDI_ODEME') setTutarText('');
               }}
             >
@@ -451,7 +515,6 @@ export default function BankaNakitCikis({
                   value={selectedLoanId}
                   onChange={(e) => {
                     setSelectedLoanId(e.target.value);
-                    setSelectedInstallmentId('');
                     setDirty(true);
                   }}
                 >
@@ -470,6 +533,13 @@ export default function BankaNakitCikis({
                     <div className="text-sm text-slate-600">Taksit #{nextInstallment.installmentNumber}</div>
                     <div className="text-sm text-slate-600">Vade: {isoToDisplay(nextInstallment.dueDate)}</div>
                     <div className="font-semibold text-lg">Tutar: {formatTl(nextInstallment.totalAmount)}</div>
+                  </div>
+                </div>
+              )}
+              {selectedLoanId && !nextInstallment && (
+                <div className="space-y-2">
+                  <div className="p-3 bg-amber-50 rounded border border-amber-200">
+                    <div className="text-sm text-amber-700">Bu kredi için ödenmemiş taksit bulunamadı.</div>
                   </div>
                 </div>
               )}
@@ -492,23 +562,48 @@ export default function BankaNakitCikis({
           {islemTuru === 'CEK_ODEME' && (
             <div className="space-y-2">
               <label>Ödenecek Çek</label>
-              <select
-                className="w-full"
-                value={selectedChequeId}
-                onChange={(e) => {
-                  setSelectedChequeId(e.target.value);
-                  const cek = eligibleCheques.find((c) => c.id === e.target.value);
-                  if (cek) setTutarText(formatTlPlain(cek.tutar));
-                  setDirty(true);
-                }}
-              >
-                <option value="">Seçiniz</option>
-                {(eligibleCheques ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {`${c.cekNo} - ${c.lehtar} (${formatTl(c.tutar)})`}
-                  </option>
-                ))}
-              </select>
+              {loadingPayableCheques ? (
+                <div className="text-sm text-gray-500">Yükleniyor...</div>
+              ) : (
+                <select
+                  className="w-full"
+                  value={selectedChequeId}
+                  onChange={(e) => {
+                    setSelectedChequeId(e.target.value);
+                    const cek = eligibleCheques.find((c) => c.id === e.target.value);
+                    if (cek) {
+                      setTutarText(formatTlPlain(cek.tutar));
+                      // Auto-fill description with cheque number and supplier name
+                      // Use counterparty directly from payableCheques (backend source of truth)
+                      const payableCheque = payableCheques.find((pc) => pc.id === e.target.value);
+                      const counterparty = payableCheque?.counterparty || (cek as any).counterparty || cek.lehtar || '';
+                      // Check if counterparty is the default format (means no supplier/customer)
+                      // Backend returns: supplier?.name || customer?.name || `Çek ${cekNo}`
+                      const defaultPattern = `Çek ${cek.cekNo}`;
+                      const isDefaultCounterparty = counterparty === defaultPattern || counterparty === cek.cekNo || !counterparty;
+                      // If counterparty is not default, it's the supplier/customer name
+                      const supplierName = !isDefaultCounterparty && counterparty ? ` - ${counterparty}` : '';
+                      setAciklama(`Çek No: ${cek.cekNo}${supplierName}`);
+                    } else {
+                      setAciklama('');
+                    }
+                    setDirty(true);
+                  }}
+                >
+                  <option value="">Seçiniz</option>
+                  {(eligibleCheques ?? []).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {`${c.cekNo} - ${c.vadeTarihi ? isoToDisplay(c.vadeTarihi) : ''} - ${formatTl(c.tutar)} - ${c.lehtar || c.cekNo}`}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {!loadingPayableCheques && eligibleCheques.length === 0 && bankaId && (
+                <div className="text-sm text-gray-500">Ödenecek çek bulunamadı</div>
+              )}
+              {!loadingPayableCheques && !bankaId && (
+                <div className="text-sm text-amber-600">Önce kaynak banka seçiniz</div>
+              )}
             </div>
           )}
           {isCardPayment && (

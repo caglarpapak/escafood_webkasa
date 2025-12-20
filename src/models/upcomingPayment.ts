@@ -9,4 +9,7 @@ export interface UpcomingPayment {
   dueDateDisplay: string;
   amount: number;
   daysLeft: number;
+  // NUCLEAR FIX: Include installmentId and loanId for loan payments
+  installmentId?: string;
+  loanId?: string;
 }

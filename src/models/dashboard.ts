@@ -1,3 +1,5 @@
+import { UpcomingPayment } from './upcomingPayment';
+
 export interface DashboardSummary {
   cashBalance: number;
   totalBankBalance: number;
@@ -13,5 +15,6 @@ export interface DashboardSummary {
     limit: number;
     availableLimit: number;
   }>;
+  upcomingPayments?: UpcomingPayment[];
 }
 

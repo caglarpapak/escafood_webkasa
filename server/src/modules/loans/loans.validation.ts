@@ -38,6 +38,13 @@ export const payInstallmentSchema = z.object({
   description: z.string().max(500).nullable().optional(),
 });
 
+export const payNextInstallmentSchema = z.object({
+  bankId: uuidSchema,
+  isoDate: z.string().regex(isoDateRegex, 'Geçerli bir tarih formatı gerekir (YYYY-MM-DD)').optional(),
+  amount: z.number().positive().optional(),
+  note: z.string().max(500).nullable().optional(),
+});
+
 export type CreateLoanInput = z.infer<typeof createLoanSchema>;
 export type UpdateLoanInput = z.infer<typeof updateLoanSchema>;
 export type DeleteLoanInput = z.infer<typeof deleteLoanSchema>;

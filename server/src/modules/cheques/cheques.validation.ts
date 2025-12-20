@@ -37,7 +37,7 @@ export const updateChequeStatusSchema = z.object({
 });
 
 export const chequeListQuerySchema = z.object({
-  status: z.nativeEnum(ChequeStatus).optional(),
+  status: z.union([z.nativeEnum(ChequeStatus), z.literal('ALL')]).optional(),
   direction: z.nativeEnum(ChequeDirection).optional(),
   entryFrom: z.string().regex(isoDateRegex).optional(),
   entryTo: z.string().regex(isoDateRegex).optional(),
@@ -56,5 +56,15 @@ export const chequeQuerySchema = chequeListQuerySchema;
 
 export const chequeIdParamSchema = z.object({
   id: z.string().uuid(),
+});
+
+export const payableChequesQuerySchema = z.object({
+  bankId: z.string().uuid().optional(),
+});
+
+export const payChequeSchema = z.object({
+  bankId: z.string().uuid('Geçerli bir banka ID gereklidir'),
+  paymentDate: z.string().regex(isoDateRegex, 'Geçerli bir tarih formatı gerekir (YYYY-MM-DD)'),
+  note: z.string().max(500).nullable().optional(),
 });
 

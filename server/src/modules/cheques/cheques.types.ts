@@ -95,3 +95,31 @@ export interface ChequeListResponse {
   };
 }
 
+export interface PayableChequeDto {
+  id: string;
+  cekNo: string;
+  maturityDate: string;
+  amount: number;
+  counterparty: string;
+  bankId: string | null;
+}
+
+export interface PayChequeDto {
+  bankId: string;
+  paymentDate: string;
+  note?: string | null;
+}
+
+export interface PayChequeResponse {
+  ok: boolean;
+  paidChequeId: string;
+  transactionId: string;
+  updatedCheque: {
+    id: string;
+    status: string;
+    paidAt: string | null;
+    paidBankId: string | null;
+    paymentTransactionId: string | null;
+  };
+}
+

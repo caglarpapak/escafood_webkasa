@@ -13,16 +13,21 @@ import {
 
 /**
  * Calculate cash balance after a transaction
+ * FINANCIAL INVARIANT: Only KASA transactions affect cash balance
+ * Credit card transactions (source=KREDI_KARTI) never affect cash balance
  */
 async function calculateBalanceAfter(
   isoDate: string,
   incoming: number,
   outgoing: number,
+  storedSource: string,
   excludeTransactionId?: string
 ): Promise<number> {
+  // FINANCIAL INVARIANT: Only KASA transactions affect cash balance
   const where: any = {
     deletedAt: null,
     isoDate: { lte: isoDate },
+    source: 'KASA', // Only include KASA transactions in cash balance calculation
   };
 
   if (excludeTransactionId) {
@@ -31,18 +36,27 @@ async function calculateBalanceAfter(
 
   const transactions = await prisma.transaction.findMany({
     where,
+    select: {
+      incoming: true,
+      outgoing: true,
+    },
     orderBy: [
       { isoDate: 'asc' },
       { createdAt: 'asc' },
     ],
   });
 
+  // Calculate balance up to this point (only KASA transactions)
   let balance = 0;
   for (const tx of transactions) {
     balance += Number(tx.incoming) - Number(tx.outgoing);
   }
 
-  balance += incoming - outgoing;
+  // Add the new transaction's effect only if it's a KASA transaction
+  // Credit card transactions (source=KREDI_KARTI) have 0 effect on cash balance
+  if (storedSource === 'KASA') {
+    balance += incoming - outgoing;
+  }
 
   return balance;
 }
@@ -397,8 +411,9 @@ export class CreditCardsService {
     }
 
 
-    // Calculate balance after
-    const balanceAfter = await calculateBalanceAfter(data.isoDate, 0, 0);
+    // FINANCIAL INVARIANT: Credit card expense never affects cash balance
+    // Calculate balance after (will be 0 since incoming=0, outgoing=0, and source=KREDI_KARTI)
+    const balanceAfter = await calculateBalanceAfter(data.isoDate, 0, 0, 'KREDI_KARTI');
 
     // Determine if transaction date is before or on closing day
     const transactionDay = parseInt(data.isoDate.split('-')[2] || '0', 10);
@@ -589,12 +604,33 @@ export class CreditCardsService {
       bankDelta = 0;
     }
 
-    const balanceAfter = await calculateBalanceAfter(data.isoDate, incoming, outgoing);
-
     // Fix: Credit card payment from bank should have source=BANKA
     const transactionSource = data.paymentSource === 'BANKA' ? 'BANKA' : 'KASA';
     
-    // Atomic transaction: create both transaction and operation together
+    // FINANCIAL INVARIANT: Only KASA payments affect cash balance
+    // Bank payments (source=BANKA) don't affect cash balance
+    const balanceAfter = await calculateBalanceAfter(data.isoDate, incoming, outgoing, transactionSource);
+    
+    // CREDIT CARD EKSTRE ÖDEME BORÇ MODELİ (FINANCIAL INVARIANT):
+    // guncelBorc = kredi kartının toplam borcu
+    // sonEkstreBorcu = bu toplam borcun ekstreye yansımış kısmı
+    // Ekstre ödeme yapıldığında:
+    // - sonEkstreBorcu = Math.max(sonEkstreBorcu - paymentAmount, 0) (0 altına inmez)
+    // - guncelBorc = guncelBorc - paymentAmount (tam tutar kadar azalır)
+    const currentSonEkstreBorcu = card.sonEkstreBorcu !== null && card.sonEkstreBorcu !== undefined 
+      ? Number(card.sonEkstreBorcu) 
+      : 0;
+    const currentManualGuncelBorc = card.manualGuncelBorc !== null && card.manualGuncelBorc !== undefined
+      ? Number(card.manualGuncelBorc)
+      : null;
+
+    // Calculate new debt values after payment
+    const newSonEkstreBorcu = Math.max(currentSonEkstreBorcu - data.amount, 0); // Never go below 0
+    const newManualGuncelBorc = currentManualGuncelBorc !== null
+      ? Math.max(currentManualGuncelBorc - data.amount, 0) // Reduce by full payment amount, but never go below 0
+      : null; // If manualGuncelBorc was null, keep it null (will be calculated from operations)
+    
+    // Atomic transaction: create transaction, operation, and update credit card together
     const result = await prisma.$transaction(async (tx) => {
       // Create transaction
       const transaction = await tx.transaction.create({
@@ -630,10 +666,53 @@ export class CreditCardsService {
         },
       });
 
-      return { transaction, operation };
+      // CRITICAL FIX: Update credit card debt values atomically
+      const updatedCard = await tx.creditCard.update({
+        where: { id: data.creditCardId },
+        data: {
+          sonEkstreBorcu: newSonEkstreBorcu,
+          manualGuncelBorc: newManualGuncelBorc,
+          updatedAt: new Date(),
+          updatedBy: createdBy,
+        },
+        include: {
+          bank: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          operations: {
+            where: {
+              deletedAt: null,
+            },
+            select: {
+              isoDate: true,
+              amount: true,
+            },
+            orderBy: {
+              isoDate: 'desc',
+            },
+          },
+        },
+      });
+
+      return { transaction, operation, updatedCard };
     });
 
-    const { transaction, operation } = result;
+    const { transaction, operation, updatedCard } = result;
+
+    // Calculate response values
+    const limit = updatedCard.limit !== null && updatedCard.limit !== undefined ? Number(updatedCard.limit) : null;
+    const manualGuncelBorc = updatedCard.manualGuncelBorc !== null && updatedCard.manualGuncelBorc !== undefined 
+      ? Number(updatedCard.manualGuncelBorc) 
+      : null;
+    const calculatedDebt = updatedCard.operations.reduce((sum: number, op) => sum + Number(op.amount), 0);
+    const currentDebt = manualGuncelBorc !== null ? manualGuncelBorc : calculatedDebt;
+    const availableLimit = limit !== null ? limit - currentDebt : null;
+    const sonEkstreBorcu = updatedCard.sonEkstreBorcu !== null && updatedCard.sonEkstreBorcu !== undefined 
+      ? Number(updatedCard.sonEkstreBorcu) 
+      : 0;
 
     return {
       operation: {
@@ -662,6 +741,22 @@ export class CreditCardsService {
         bankId: transaction.bankId,
         bankDelta: Number(transaction.bankDelta),
         outgoing: Number(transaction.outgoing),
+      },
+      // CRITICAL FIX: Include updated credit card in response (same as createExpense)
+      creditCard: {
+        id: updatedCard.id,
+        name: updatedCard.name,
+        bankId: updatedCard.bankId,
+        limit,
+        closingDay: updatedCard.closingDay,
+        dueDay: updatedCard.dueDay,
+        sonEkstreBorcu,
+        manualGuncelBorc,
+        isActive: updatedCard.isActive,
+        currentDebt,
+        availableLimit,
+        lastOperationDate: updatedCard.operations.length > 0 ? updatedCard.operations[0].isoDate : null,
+        bank: updatedCard.bank || null,
       },
     };
   }

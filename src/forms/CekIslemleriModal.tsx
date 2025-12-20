@@ -28,7 +28,7 @@ interface Props {
   suppliers: Supplier[];
   banks: BankMaster[];
   currentUserEmail: string;
-  initialTab: 'GIRIS' | 'CIKIS' | 'YENI' | 'RAPOR';
+  initialTab: 'GIRIS' | 'CIKIS' | 'YENI' | 'RAPOR' | 'ODENMIS';
 }
 
 type CikisReason =
@@ -237,6 +237,8 @@ export default function CekIslemleriModal({
         return 'Tahsil Edildi';
       case 'ODEMEDE':
         return 'Ödemede / Dolaşımda';
+      case 'ODENDI':
+        return 'Ödendi';
       case 'KARSILIKSIZ':
         return 'Karşılıksız';
       default:
@@ -505,6 +507,7 @@ export default function CekIslemleriModal({
             { key: 'CIKIS', label: 'Kasadan Çek Çıkışı' },
             { key: 'YENI', label: 'Yeni Düzenlenen Çek' },
             { key: 'RAPOR', label: 'Tüm Çekler Raporu' },
+            { key: 'ODENMIS', label: 'Ödenmiş Çekler' },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -877,7 +880,7 @@ export default function CekIslemleriModal({
               <FormRow label="Durumlar">
                 <div className="flex flex-wrap gap-2">
                   {(
-                    ['KASADA', 'BANKADA_TAHSILDE', 'ODEMEDE', 'TAHSIL_EDILDI', 'KARSILIKSIZ'] as ChequeStatus[]
+                    ['KASADA', 'BANKADA_TAHSILDE', 'ODEMEDE', 'TAHSIL_EDILDI', 'ODENDI', 'KARSILIKSIZ'] as ChequeStatus[]
                   ).map((s) => (
                     <label key={s} className="flex items-center space-x-1 text-xs">
                       <input
@@ -945,6 +948,55 @@ export default function CekIslemleriModal({
                       <td className="py-2 px-2">{getKonum(c)}</td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'ODENMIS' && (
+          <div className="space-y-4">
+            <div className="text-sm text-slate-600 mb-4">
+              Ödenmiş çekler listeleniyor (status = ODENDI)
+            </div>
+            <div className="border rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="py-2 px-2 text-left">Çek No</th>
+                    <th className="py-2 px-2 text-left">Banka</th>
+                    <th className="py-2 px-2 text-left">Düzenleyen</th>
+                    <th className="py-2 px-2 text-left">Lehtar</th>
+                    <th className="py-2 px-2 text-left">Vade Tarihi</th>
+                    <th className="py-2 px-2 text-left">Tutar</th>
+                    <th className="py-2 px-2 text-left">Durum</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {normalizedCheques
+                    .filter((c) => c.status === 'ODENDI')
+                    .sort((a, b) => b.vadeTarihi.localeCompare(a.vadeTarihi))
+                    .length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="py-3 text-center text-slate-500">
+                        Ödenmiş çek bulunamadı.
+                      </td>
+                    </tr>
+                  )}
+                  {normalizedCheques
+                    .filter((c) => c.status === 'ODENDI')
+                    .sort((a, b) => b.vadeTarihi.localeCompare(a.vadeTarihi))
+                    .map((c) => (
+                      <tr key={c.id} className="border-t">
+                        <td className="py-2 px-2">{c.cekNo}</td>
+                        <td className="py-2 px-2">{c.bankaAdi || '-'}</td>
+                        <td className="py-2 px-2">{c.duzenleyen}</td>
+                        <td className="py-2 px-2">{c.lehtar}</td>
+                        <td className="py-2 px-2">{isoToDisplay(c.vadeTarihi)}</td>
+                        <td className="py-2 px-2">{formatTl(c.tutar)}</td>
+                        <td className="py-2 px-2">{statusLabel(c.status)}</td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
