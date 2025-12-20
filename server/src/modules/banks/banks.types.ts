@@ -21,5 +21,6 @@ export interface BankRecord {
 }
 
 export interface BankWithBalance extends BankRecord {
-  currentBalance: number;
+  currentBalance: number; // openingBalance (from Bank table) + SUM(bankDelta excluding opening transactions)
+  openingBalance: number; // Opening balance from Bank.openingBalance field (NOT from transactions)
 }

@@ -615,7 +615,7 @@ export class ChequesService {
     };
 
     // FIX: Support status filter - if status is provided, use it; if "ALL", show all (no filter)
-    if (query.status && query.status !== 'ALL') {
+    if (query.status !== undefined) {
       where.status = query.status;
     }
 

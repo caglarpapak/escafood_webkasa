@@ -1,54 +1,27 @@
 import { prisma } from '../../config/prisma';
-import { BankRecord, BankWithBalance, CreateBankDTO, DeleteBankDTO, UpdateBankDTO } from './banks.types';
-import { TransactionsService } from '../transactions/transactions.service';
-import { DailyTransactionType, DailyTransactionSource } from '@prisma/client';
-
-const transactionsService = new TransactionsService();
+import { BankRecord, BankWithBalance, CreateBankDTO, UpdateBankDTO } from './banks.types';
 
 /**
- * Create an opening balance transaction for a newly created bank
- * This ensures the bank's balance is correctly initialized in the transaction system
+ * Opening balance artık transaction olarak yazılmıyor.
+ * Bank.openingBalance alanında tutuluyor.
+ *
+ * currentBalance = openingBalance + sum(transactions.bankDelta)
+ *
+ * Legacy (eski) veride "Açılış bakiyesi" açıklamalı transactionlar kalmış olabilir.
+ * Bu nedenle groupBy hesaplarından bu satırları filtreliyoruz.
  */
-async function createBankOpeningBalanceTransaction(
-  bankId: string,
-  initialBalance: number,
-  isoDate: string,
-  createdBy: string
-): Promise<void> {
-  // Only create transaction if there's a non-zero opening balance
-  if (!initialBalance || initialBalance === 0) {
-    return;
-  }
 
-  // Fix: Bank opening balance should follow BANK CASH IN mapping: incoming=0, outgoing=0, bankDelta=+amount
-  await transactionsService.createTransaction(
-    {
-      isoDate,
-      type: DailyTransactionType.NAKIT_TAHSILAT, // Use NAKIT_TAHSILAT for bank cash in
-      source: DailyTransactionSource.BANKA,
-      counterparty: null,
-      description: 'Açılış bakiyesi',
-      incoming: initialBalance, // Will be normalized to 0 by transaction service
-      outgoing: 0,
-      bankDelta: initialBalance, // Will be normalized correctly by transaction service
-      bankId,
-      documentNo: null,
-      cashAccountId: null,
-      creditCardId: null,
-      chequeId: null,
-      customerId: null,
-      supplierId: null,
-      attachmentId: null,
-      displayIncoming: null,
-      displayOutgoing: null,
-    },
-    createdBy
-  );
+const OPENING_TX_DESC = 'Açılış bakiyesi';
+
+function toNumber(value: any): number {
+  if (value === null || value === undefined) return 0;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
 }
 
 export class BanksService {
   async getAllBanksWithBalances(): Promise<BankWithBalance[]> {
-    const [banks, balanceGroups] = await prisma.$transaction([
+    const [banks, deltaGroups] = await prisma.$transaction([
       prisma.bank.findMany({
         where: { deletedAt: null },
         orderBy: { name: 'asc' },
@@ -58,72 +31,70 @@ export class BanksService {
         _sum: { bankDelta: true },
         where: {
           deletedAt: null,
-          bankId: {
-            not: null,
-          },
-        },
-        orderBy: {
-          bankId: 'asc',
+          bankId: { not: null },
+          // Legacy opening tx’leri dışarıda bırak
+          OR: [{ description: { not: OPENING_TX_DESC } }, { description: null }],
         },
       }),
     ]);
 
-    const balanceMap = new Map<string, number>();
-    for (const group of balanceGroups) {
-      if (group.bankId && group._sum) {
-        balanceMap.set(group.bankId, Number(group._sum.bankDelta ?? 0));
-      }
+    const deltaMap = new Map<string, number>();
+    for (const g of deltaGroups) {
+      if (!g.bankId) continue;
+      deltaMap.set(g.bankId, toNumber(g._sum?.bankDelta));
     }
 
-    return banks.map((bank) => ({
-      ...bank,
-      currentBalance: balanceMap.get(bank.id) ?? 0,
-    }));
+    return banks.map((bank) => {
+      const openingBalance = toNumber((bank as any).openingBalance);
+      const transactionDelta = deltaMap.get(bank.id) ?? 0;
+      const currentBalance = openingBalance + transactionDelta;
+
+      return {
+        ...(bank as any),
+        openingBalance,
+        currentBalance,
+      };
+    });
   }
 
   async createBank(payload: CreateBankDTO, createdBy: string): Promise<BankWithBalance> {
+    const openingBalance = payload.openingBalance ?? 0;
+
     const created = await prisma.bank.create({
       data: {
         name: payload.name,
         accountNo: payload.accountNo ?? null,
         iban: payload.iban ?? null,
+        // openingBalance Bank tablosunda saklanır
+        openingBalance: openingBalance !== 0 ? openingBalance : null,
         createdBy,
-      },
+      } as any,
     });
 
-    // BUG 2 FIX: Create opening balance transaction but it will be filtered from daily transaction list
-    // This transaction is needed for balance calculation (bankDelta) but won't appear in "Gün içi işlemler"
-    // The transaction has description "Açılış bakiyesi" which is filtered in listTransactions
-    const initialBalance = payload.initialBalance ?? 0;
-    if (initialBalance !== 0) {
-      // Use today's date for opening balance transaction
-      const today = new Date().toISOString().split('T')[0];
-      await createBankOpeningBalanceTransaction(created.id, initialBalance, today, createdBy);
-    }
-
-    // Calculate current balance (will include opening balance transaction if created)
-    const balanceGroups = await prisma.transaction.groupBy({
+    // Yeni bankada henüz transaction yok sayılır; ama yine de hesaplayalım:
+    const deltaGroups = await prisma.transaction.groupBy({
       by: ['bankId'],
       _sum: { bankDelta: true },
       where: {
         deletedAt: null,
         bankId: created.id,
+        OR: [{ description: { not: OPENING_TX_DESC } }, { description: null }],
       },
     });
 
-    const currentBalance = balanceGroups.length > 0 && balanceGroups[0]._sum?.bankDelta
-      ? Number(balanceGroups[0]._sum.bankDelta)
-      : 0;
+    const transactionDelta =
+      deltaGroups.length > 0 ? toNumber(deltaGroups[0]._sum?.bankDelta) : 0;
 
     return {
-      ...created,
-      currentBalance,
+      ...(created as any),
+      openingBalance: toNumber((created as any).openingBalance) || openingBalance,
+      currentBalance: openingBalance + transactionDelta,
     };
   }
 
-  async updateBank(id: string, payload: UpdateBankDTO, updatedBy: string): Promise<BankRecord> {
+  async updateBank(id: string, payload: UpdateBankDTO, updatedBy: string): Promise<BankWithBalance> {
     const existing = await prisma.bank.findUnique({ where: { id } });
-    if (!existing || existing.deletedAt) {
+    if (!existing || (existing as any).deletedAt) {
       throw new Error('Bank not found.');
     }
 
@@ -132,33 +103,48 @@ export class BanksService {
       updatedBy,
     };
 
-    if (payload.name !== undefined) {
-      data.name = payload.name;
-    }
+    if (payload.name !== undefined) data.name = payload.name;
+    if (payload.accountNo !== undefined) data.accountNo = payload.accountNo ?? null;
+    if (payload.iban !== undefined) data.iban = payload.iban ?? null;
+    if (payload.isActive !== undefined) data.isActive = payload.isActive;
 
-    if (payload.accountNo !== undefined) {
-      data.accountNo = payload.accountNo ?? null;
-    }
-
-    if (payload.iban !== undefined) {
-      data.iban = payload.iban ?? null;
-    }
-
-    if (payload.isActive !== undefined) {
-      data.isActive = payload.isActive;
+    // Frontend’den "initialBalance" geliyor: onu Bank.openingBalance’a yaz
+    if ((payload as any).initialBalance !== undefined) {
+      const ib = (payload as any).initialBalance as number;
+      data.openingBalance = ib !== 0 ? ib : null;
     }
 
     const updated = await prisma.bank.update({
       where: { id },
-      data,
+      data: data as any,
     });
 
-    return updated;
+    const deltaGroups = await prisma.transaction.groupBy({
+      by: ['bankId'],
+      _sum: { bankDelta: true },
+      where: {
+        deletedAt: null,
+        bankId: updated.id,
+        OR: [{ description: { not: OPENING_TX_DESC } }, { description: null }],
+      },
+    });
+
+    const transactionDelta =
+      deltaGroups.length > 0 ? toNumber(deltaGroups[0]._sum?.bankDelta) : 0;
+
+    const openingBalance = toNumber((updated as any).openingBalance);
+    const currentBalance = openingBalance + transactionDelta;
+
+    return {
+      ...(updated as any),
+      openingBalance,
+      currentBalance,
+    };
   }
 
   async softDeleteBank(id: string, deletedBy: string): Promise<BankRecord> {
     const existing = await prisma.bank.findUnique({ where: { id } });
-    if (!existing || existing.deletedAt) {
+    if (!existing || (existing as any).deletedAt) {
       throw new Error('Bank not found.');
     }
 
@@ -168,10 +154,10 @@ export class BanksService {
         isActive: false,
         deletedAt: new Date(),
         deletedBy,
-      },
+      } as any,
     });
 
-    return deleted;
+    return deleted as any;
   }
 
   async bulkSaveBanks(
@@ -188,100 +174,83 @@ export class BanksService {
     const results: BankWithBalance[] = [];
 
     for (const item of payload) {
-      try {
-        const isNew = item.id.startsWith('tmp-');
-        const openingBalance = item.openingBalance ?? 0;
+      const openingBalance = item.openingBalance ?? 0;
+      const isNew = item.id.startsWith('tmp-');
 
-        if (isNew) {
-          console.log('BanksService.bulkSaveBanks - creating new bank:', item.name);
-          // Create new bank
-          const created = await prisma.bank.create({
+      if (isNew) {
+        const created = await prisma.bank.create({
           data: {
             name: item.name,
             accountNo: item.accountNo ?? null,
             iban: item.iban ?? null,
+            openingBalance: openingBalance !== 0 ? openingBalance : null,
             isActive: item.isActive ?? true,
             createdBy: userId,
-          },
+          } as any,
         });
 
-        // Create opening balance transaction if needed
-        // Note: openingBalance from frontend is the same as initialBalance
-        if (openingBalance !== 0) {
-          const today = new Date().toISOString().split('T')[0];
-          await createBankOpeningBalanceTransaction(created.id, openingBalance, today, userId);
-        }
-
-        // Calculate current balance
-        const balanceGroups = await prisma.transaction.groupBy({
+        // new bank transactionDelta = 0 varsayılsa da legacy / dışarıdan eklenmiş olabilir
+        const deltaGroups = await prisma.transaction.groupBy({
           by: ['bankId'],
           _sum: { bankDelta: true },
           where: {
             deletedAt: null,
             bankId: created.id,
+            OR: [{ description: { not: OPENING_TX_DESC } }, { description: null }],
           },
         });
 
-        const currentBalance =
-          balanceGroups.length > 0 && balanceGroups[0]._sum?.bankDelta
-            ? Number(balanceGroups[0]._sum.bankDelta)
-            : 0;
+        const transactionDelta =
+          deltaGroups.length > 0 ? toNumber(deltaGroups[0]._sum?.bankDelta) : 0;
 
-        console.log('BanksService.bulkSaveBanks - created bank:', created.id, 'currentBalance:', currentBalance);
         results.push({
-          ...created,
-          currentBalance,
-        });
-      } else {
-        console.log('BanksService.bulkSaveBanks - updating existing bank:', item.id);
-        // Update existing bank
-        const existing = await prisma.bank.findUnique({ where: { id: item.id } });
-        if (!existing || existing.deletedAt) {
-          console.log('BanksService.bulkSaveBanks - bank not found or deleted, skipping:', item.id);
-          continue; // Skip deleted or non-existent banks
-        }
-
-        const updated = await prisma.bank.update({
-          where: { id: item.id },
-          data: {
-            name: item.name,
-            accountNo: item.accountNo ?? null,
-            iban: item.iban ?? null,
-            isActive: item.isActive ?? true,
-            updatedAt: new Date(),
-            updatedBy: userId,
-          },
+          ...(created as any),
+          openingBalance,
+          currentBalance: openingBalance + transactionDelta,
         });
 
-        // Calculate current balance
-        const balanceGroups = await prisma.transaction.groupBy({
-          by: ['bankId'],
-          _sum: { bankDelta: true },
-          where: {
-            deletedAt: null,
-            bankId: updated.id,
-          },
-        });
-
-        const currentBalance =
-          balanceGroups.length > 0 && balanceGroups[0]._sum?.bankDelta
-            ? Number(balanceGroups[0]._sum.bankDelta)
-            : 0;
-
-        console.log('BanksService.bulkSaveBanks - updated bank:', updated.id, 'currentBalance:', currentBalance);
-        results.push({
-          ...updated,
-          currentBalance,
-        });
+        continue;
       }
-      } catch (itemError: any) {
-        console.error('BanksService.bulkSaveBanks - error processing item:', item, 'error:', itemError);
-        // Continue with next item instead of failing entire batch
-        // But log the error so we can debug
+
+      // Update existing
+      const existing = await prisma.bank.findUnique({ where: { id: item.id } });
+      if (!existing || (existing as any).deletedAt) {
+        continue;
       }
+
+      const updated = await prisma.bank.update({
+        where: { id: item.id },
+        data: {
+          name: item.name,
+          accountNo: item.accountNo ?? null,
+          iban: item.iban ?? null,
+          openingBalance: openingBalance !== 0 ? openingBalance : null,
+          isActive: item.isActive ?? true,
+          updatedAt: new Date(),
+          updatedBy: userId,
+        } as any,
+      });
+
+      const deltaGroups = await prisma.transaction.groupBy({
+        by: ['bankId'],
+        _sum: { bankDelta: true },
+        where: {
+          deletedAt: null,
+          bankId: updated.id,
+          OR: [{ description: { not: OPENING_TX_DESC } }, { description: null }],
+        },
+      });
+
+      const transactionDelta =
+        deltaGroups.length > 0 ? toNumber(deltaGroups[0]._sum?.bankDelta) : 0;
+
+      results.push({
+        ...(updated as any),
+        openingBalance,
+        currentBalance: openingBalance + transactionDelta,
+      });
     }
 
-    console.log('BanksService.bulkSaveBanks - returning results:', results.length, 'banks');
     return results;
   }
 }

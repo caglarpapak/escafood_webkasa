@@ -234,30 +234,82 @@ const AyarlarModal: React.FC<Props> = ({
         setLocalBanks(mappedBanks);
         setLocalCreditCards(mappedCards);
         setLocalLoans(backendLoans);
-        // Load customers and suppliers from localStorage (no backend endpoint yet)
-        const savedCustomers = loadCustomersFromStorage();
-        const savedSuppliers = loadSuppliersFromStorage();
-        const savedPosTerminals = loadPosTerminalsFromStorage();
-        console.log('AyarlarModal fetchAll - savedCustomers:', savedCustomers.length, 'savedSuppliers:', savedSuppliers.length, 'savedPosTerminals:', savedPosTerminals.length);
-        console.log('AyarlarModal fetchAll - props customers:', customers.length, 'props suppliers:', suppliers.length, 'props posTerminals:', posTerminals.length);
-        // Use saved data if available, otherwise use props (which may be empty)
-        const finalCustomers = savedCustomers.length > 0 ? savedCustomers : customers;
-        const finalSuppliers = savedSuppliers.length > 0 ? savedSuppliers : suppliers;
-        const finalPosTerminals = savedPosTerminals.length > 0 ? savedPosTerminals : posTerminals;
-        console.log('AyarlarModal fetchAll - finalCustomers:', finalCustomers.length, 'finalSuppliers:', finalSuppliers.length, 'finalPosTerminals:', finalPosTerminals.length);
+        // Load customers, suppliers, and POS terminals from backend (authoritative source)
+        // Fallback to localStorage if backend is unavailable
+        let finalCustomers: Customer[] = [];
+        let finalSuppliers: Supplier[] = [];
+        let finalPosTerminals: PosTerminal[] = [];
+        
+        try {
+          const backendCustomers = await apiGet<Array<{
+            id: string;
+            name: string;
+            isActive: boolean;
+          }>>('/api/customers');
+          finalCustomers = backendCustomers.map((c) => {
+            const parts = c.name.split(' - ');
+            return {
+              id: c.id,
+              kod: parts[0] || '',
+              ad: parts.slice(1).join(' - ') || c.name,
+              aktifMi: c.isActive,
+            };
+          });
+        } catch (e) {
+          console.warn('Failed to load customers from backend, using localStorage:', e);
+          const savedCustomers = loadCustomersFromStorage();
+          finalCustomers = savedCustomers.length > 0 ? savedCustomers : customers;
+        }
+        
+        try {
+          const backendSuppliers = await apiGet<Array<{
+            id: string;
+            name: string;
+            isActive: boolean;
+          }>>('/api/suppliers');
+          finalSuppliers = backendSuppliers.map((s) => {
+            const parts = s.name.split(' - ');
+            return {
+              id: s.id,
+              kod: parts[0] || '',
+              ad: parts.slice(1).join(' - ') || s.name,
+              aktifMi: s.isActive,
+            };
+          });
+        } catch (e) {
+          console.warn('Failed to load suppliers from backend, using localStorage:', e);
+          const savedSuppliers = loadSuppliersFromStorage();
+          finalSuppliers = savedSuppliers.length > 0 ? savedSuppliers : suppliers;
+        }
+        
+        try {
+          const backendPosTerminals = await apiGet<Array<{
+            id: string;
+            bankId: string;
+            name: string;
+            commissionRate: number;
+            isActive: boolean;
+          }>>('/api/pos-terminals');
+          finalPosTerminals = backendPosTerminals.map((p) => ({
+            id: p.id,
+            bankaId: p.bankId,
+            posAdi: p.name,
+            komisyonOrani: p.commissionRate,
+            aktifMi: p.isActive,
+          }));
+        } catch (e) {
+          console.warn('Failed to load POS terminals from backend, using localStorage:', e);
+          const savedPosTerminals = loadPosTerminalsFromStorage();
+          finalPosTerminals = savedPosTerminals.length > 0 ? savedPosTerminals : posTerminals;
+        }
+        
         setLocalCustomers(finalCustomers);
         setLocalSuppliers(finalSuppliers);
         setLocalPosTerminals(finalPosTerminals);
-        // Also update parent state if we loaded from localStorage
-        if (savedCustomers.length > 0) {
-          setCustomers(finalCustomers);
-        }
-        if (savedSuppliers.length > 0) {
-          setSuppliers(finalSuppliers);
-        }
-        if (savedPosTerminals.length > 0) {
-          setPosTerminals(finalPosTerminals);
-        }
+        // Update parent state
+        setCustomers(finalCustomers);
+        setSuppliers(finalSuppliers);
+        setPosTerminals(finalPosTerminals);
         setBankFlags(flagsFromStorage);
         setGlobalForm(globalSettings);
 
@@ -494,8 +546,9 @@ const AyarlarModal: React.FC<Props> = ({
       const mappedBanks: BankMaster[] = saved.map((savedBank, idx) => {
         const localBank = banks[idx];
         const f = flagsMap[savedBank.id] || {};
-        // Preserve the opening balance that user entered
-        const openingBalance = localBank?.acilisBakiyesi ?? openingBalances[savedBank.id] ?? savedBank.currentBalance ?? 0;
+        // CRITICAL FIX: Use openingBalance from backend (Bank.openingBalance), NOT currentBalance
+        // currentBalance = openingBalance + transactionDelta, so using it would double-count
+        const openingBalance = localBank?.acilisBakiyesi ?? openingBalances[savedBank.id] ?? (savedBank as any).openingBalance ?? 0;
         // Store in newOpeningBalances for batch update
         newOpeningBalances[savedBank.id] = openingBalance;
         return {
@@ -861,14 +914,46 @@ const AyarlarModal: React.FC<Props> = ({
   const handleSaveCustomers = async () => {
     setLoading(true);
     try {
-      // Save to localStorage (no backend endpoint yet)
-      saveCustomersToStorage(localCustomers);
-      setCustomers(localCustomers);
+      // CRITICAL FIX: Save to backend (single source of truth)
+      // Convert frontend format to backend format
+      const payload = localCustomers.map((c) => ({
+        id: c.id,
+        kod: c.kod,
+        ad: c.ad,
+        aktifMi: c.aktifMi,
+      }));
+      
+      // Backend will reject empty array (400 Bad Request) to prevent accidental data loss
+      const saved = await apiPost<Array<{
+        id: string;
+        name: string; // Backend format: "kod - ad"
+        isActive: boolean;
+      }>>('/api/customers/bulk-save', payload);
+      
+      // Convert backend response to frontend format
+      const mappedCustomers: Customer[] = saved.map((c) => {
+        const parts = c.name.split(' - ');
+        const kod = parts[0] || '';
+        const ad = parts.slice(1).join(' - ') || c.name;
+        return {
+          id: c.id,
+          kod,
+          ad,
+          aktifMi: c.isActive,
+        };
+      });
+      
+      // Update parent state
+      setCustomers(mappedCustomers);
+      
+      // Update localStorage cache (for offline/performance, not as source of truth)
+      saveCustomersToStorage(mappedCustomers);
+      
       setDirty(false);
       alert('Müşteriler başarıyla kaydedildi.');
     } catch (error: any) {
       console.error('Customers save error:', error);
-      const errorMessage = error?.message || 'Müşteriler kaydedilirken bir hata oluştu.';
+      const errorMessage = error?.message || error?.response?.data?.message || 'Müşteriler kaydedilirken bir hata oluştu.';
       alert(`Hata: ${errorMessage}`);
     } finally {
       setLoading(false);
@@ -879,9 +964,36 @@ const AyarlarModal: React.FC<Props> = ({
   const handleSaveSuppliers = async () => {
     setLoading(true);
     try {
-      // Save to localStorage (no backend endpoint yet)
-      saveSuppliersToStorage(localSuppliers);
-      setSuppliers(localSuppliers);
+      // Prepare payload for bulk save
+      const payload = localSuppliers.map((s) => ({
+        id: s.id,
+        kod: s.kod,
+        ad: s.ad,
+        aktifMi: s.aktifMi ?? true,
+      }));
+      
+      // Backend will reject empty array (400 Bad Request) to prevent accidental data loss
+      const saved = await apiPost<Array<{
+        id: string;
+        name: string; // Backend format: "kod - ad"
+        isActive: boolean;
+      }>>('/api/suppliers/bulk-save', payload);
+      
+      // Convert backend response to frontend format
+      const mappedSuppliers: Supplier[] = saved.map((s) => {
+        const parts = s.name.split(' - ');
+        const kod = parts[0] || '';
+        const ad = parts.slice(1).join(' - ') || s.name;
+        return {
+          id: s.id,
+          kod,
+          ad,
+          aktifMi: s.isActive,
+        };
+      });
+      
+      setLocalSuppliers(mappedSuppliers);
+      setSuppliers(mappedSuppliers);
       setDirty(false);
       alert('Tedarikçiler başarıyla kaydedildi.');
     } catch (error: any) {
@@ -897,9 +1009,35 @@ const AyarlarModal: React.FC<Props> = ({
   const handleSavePos = async () => {
     setLoading(true);
     try {
-      // Save to localStorage (no backend endpoint yet)
-      savePosTerminalsToStorage(localPosTerminals);
-      setPosTerminals(localPosTerminals);
+      // Prepare payload for bulk save
+      const payload = localPosTerminals.map((p) => ({
+        id: p.id,
+        bankaId: p.bankaId,
+        posAdi: p.posAdi,
+        komisyonOrani: p.komisyonOrani,
+        aktifMi: p.aktifMi ?? true,
+      }));
+      
+      // Backend will reject empty array (400 Bad Request) to prevent accidental data loss
+      const saved = await apiPost<Array<{
+        id: string;
+        bankId: string;
+        name: string;
+        commissionRate: number;
+        isActive: boolean;
+      }>>('/api/pos-terminals/bulk-save', payload);
+      
+      // Convert backend response to frontend format
+      const mappedPosTerminals: PosTerminal[] = saved.map((p) => ({
+        id: p.id,
+        bankaId: p.bankId,
+        posAdi: p.name,
+        komisyonOrani: p.commissionRate,
+        aktifMi: p.isActive,
+      }));
+      
+      setLocalPosTerminals(mappedPosTerminals);
+      setPosTerminals(mappedPosTerminals);
       setDirty(false);
       alert('POS terminalleri başarıyla kaydedildi.');
     } catch (error: any) {

@@ -43,6 +43,9 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
     bankInTotal: number;
     bankOutTotal: number;
     bankNet: number;
+    bankOpeningTotal: number; // NEW: Opening balance from Bank.openingBalance
+    bankNetDelta: number; // NEW: Net delta from transactions
+    bankClosingTotal: number; // NEW: Opening + Net Delta
     cashInTotal: number;
     cashOutTotal: number;
     cashNet: number;
@@ -72,6 +75,9 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
           bankInTotal: number;
           bankOutTotal: number;
           bankNet: number;
+          bankOpeningTotal: number; // NEW: Opening balance
+          bankNetDelta: number; // NEW: Net delta
+          bankClosingTotal: number; // NEW: Closing balance
           cashInTotal: number;
           cashOutTotal: number;
           cashNet: number;
@@ -563,7 +569,7 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
       </div>
 
       {/* Bank Movement Summary Boxes */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <div className="card p-3 text-sm border-l-4 border-l-blue-500">
           <div className="text-slate-500 text-xs">Banka Hareketleri</div>
           <div className="text-xs text-slate-400 mb-1">Banka Toplam Giriş</div>
@@ -580,9 +586,25 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
         </div>
         <div className="card p-3 text-sm border-l-4 border-l-blue-500">
           <div className="text-slate-500 text-xs opacity-0">Banka Hareketleri</div>
-          <div className="text-xs text-slate-400 mb-1">Banka Net</div>
+          <div className="text-xs text-slate-400 mb-1">Banka Net (Dönem İçi)</div>
           <div className="text-base font-semibold text-slate-800">
             {loading ? '...' : formatTl(reportData?.bankNet || 0)}
+          </div>
+        </div>
+        {/* NEW: Bank Opening Balance */}
+        <div className="card p-3 text-sm border-l-4 border-l-purple-500">
+          <div className="text-slate-500 text-xs opacity-0">Banka Bakiyeleri</div>
+          <div className="text-xs text-slate-400 mb-1">Banka Açılış Bakiyesi</div>
+          <div className="text-base font-semibold text-purple-600">
+            {loading ? '...' : formatTl(reportData?.bankOpeningTotal || 0)}
+          </div>
+        </div>
+        {/* NEW: Bank Closing Balance */}
+        <div className="card p-3 text-sm border-l-4 border-l-indigo-500">
+          <div className="text-slate-500 text-xs opacity-0">Banka Bakiyeleri</div>
+          <div className="text-xs text-slate-400 mb-1">Banka Dönem Sonu Bakiyesi</div>
+          <div className="text-base font-semibold text-indigo-600">
+            {loading ? '...' : formatTl(reportData?.bankClosingTotal || 0)}
           </div>
         </div>
       </div>

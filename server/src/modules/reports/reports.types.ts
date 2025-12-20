@@ -52,10 +52,14 @@ export interface NakitAkisResponse {
   totalIn: number;
   totalOut: number;
   net: number;
-  // Bank movement totals (based on bankDelta)
-  bankInTotal: number; // Sum of all transactions where bankDelta > 0
-  bankOutTotal: number; // Sum of absolute values where bankDelta < 0 (shown as positive)
-  bankNet: number; // bankInTotal - bankOutTotal
+  // Bank movement totals (based on bankDelta) - DÖNEM İÇİ HAREKETLER
+  bankInTotal: number; // Sum of all transactions where bankDelta > 0 (in date range)
+  bankOutTotal: number; // Sum of absolute values where bankDelta < 0 (shown as positive) (in date range)
+  bankNet: number; // bankInTotal - bankOutTotal (DÖNEM İÇİ NET)
+  // Bank opening/closing balances (from Bank.openingBalance, NOT transactions)
+  bankOpeningTotal: number; // SUM(Bank.openingBalance) - AÇILIŞ BAKİYESİ
+  bankNetDelta: number; // SUM(transactions.bankDelta in date range) - DÖNEM İÇİ NET DELTA
+  bankClosingTotal: number; // bankOpeningTotal + bankNetDelta - DÖNEM SONU BAKİYESİ
   // Cash movement totals (based on source = KASA and incoming/outgoing)
   cashInTotal: number; // Sum of source = KASA and incoming > 0
   cashOutTotal: number; // Sum of source = KASA and outgoing > 0

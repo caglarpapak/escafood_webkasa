@@ -12,6 +12,10 @@ import creditCardsRouter from './modules/creditCards';
 import loansRouter from './modules/loans';
 import reportsRouter from './modules/reports';
 import dashboardRouter from './modules/dashboard';
+import customersRouter from './modules/customers';
+import suppliersRouter from './modules/suppliers';
+import posTerminalsRouter from './modules/pos-terminals';
+import adminRouter from './modules/admin/admin.router';
 import { prisma } from './config/prisma';
 import { seedUsers } from './config/seedUsers';
 
@@ -37,6 +41,10 @@ app.use('/api/credit-cards', creditCardsRouter);
 app.use('/api/loans', loansRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/customers', customersRouter);
+app.use('/api/suppliers', suppliersRouter);
+app.use('/api/pos-terminals', posTerminalsRouter);
+app.use('/api/admin', adminRouter);
 
 app.use((req: Request, res: Response) => {
   res.status(404).json({ message: `Route not found: ${req.method} ${req.path}` });

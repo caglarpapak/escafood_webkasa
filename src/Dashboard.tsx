@@ -162,6 +162,57 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   // Start with empty banks array - will be loaded from backend
   const [banks, setBanks] = useState<BankMaster[]>([]);
   const [posTerminals, setPosTerminals] = useState<PosTerminal[]>([]);
+
+  // POS Terminals: Load from backend (authoritative source)
+  useEffect(() => {
+    const fetchPosTerminals = async () => {
+      try {
+        // Try backend first (authoritative source)
+        const backendPosTerminals = await apiGet<Array<{
+          id: string;
+          bankId: string;
+          name: string;
+          commissionRate: number;
+          isActive: boolean;
+        }>>('/api/pos-terminals');
+        
+        // Convert backend format to frontend format
+        const mappedPosTerminals: PosTerminal[] = backendPosTerminals.map((p) => ({
+          id: p.id,
+          bankaId: p.bankId,
+          posAdi: p.name,
+          komisyonOrani: p.commissionRate,
+          aktifMi: p.isActive,
+        }));
+        
+        setPosTerminals(mappedPosTerminals);
+        
+        // Cache in localStorage (optional, for offline fallback)
+        try {
+          localStorage.setItem('esca-webkasa-pos-terminals', JSON.stringify(mappedPosTerminals));
+        } catch (e) {
+          console.warn('Failed to update POS terminals cache in localStorage:', e);
+        }
+      } catch (error: any) {
+        console.error('Failed to load POS terminals from backend:', error);
+        // Fallback to localStorage if backend is unavailable
+        try {
+          const savedPosTerminals = localStorage.getItem('esca-webkasa-pos-terminals');
+          if (savedPosTerminals) {
+            const parsed = JSON.parse(savedPosTerminals);
+            if (Array.isArray(parsed)) {
+              setPosTerminals(parsed);
+              console.warn('Using cached POS terminals from localStorage (backend unavailable)');
+            }
+          }
+        } catch (e) {
+          console.error('Failed to parse POS terminals from localStorage:', e);
+        }
+      }
+    };
+    
+    fetchPosTerminals();
+  }, []);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [creditCards, setCreditCards] = useState<CreditCard[]>([]);
@@ -320,7 +371,10 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             kodu: bank.accountNo ? bank.accountNo.substring(0, 4).toUpperCase() : 'BNK',
             hesapAdi: bank.name + (bank.accountNo ? ` - ${bank.accountNo}` : ''),
             iban: bank.iban || undefined,
-            acilisBakiyesi: bank.currentBalance, // Use currentBalance from backend
+            // BUG FIX: Use openingBalance (NOT currentBalance) for acilisBakiyesi
+            // currentBalance = openingBalance + all bankDelta transactions
+            // If we use currentBalance, it will be double-counted when we add openingBalancesSum
+            acilisBakiyesi: (bank as any).openingBalance ?? 0,
             aktifMi: bank.isActive,
             // Fix Bug 2: Load boolean flags from localStorage
             cekKarnesiVarMi: flags.cekKarnesiVarMi,
@@ -345,36 +399,125 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     fetchBanks();
   }, []);
 
-  // Fetch customers and suppliers from localStorage (saved by AyarlarModal)
+  // CRITICAL FIX: Fetch customers from backend (single source of truth)
+  // localStorage is only used as cache, not as primary source
   useEffect(() => {
-    try {
-      const savedCustomers = localStorage.getItem('esca-webkasa-customers');
-      const savedSuppliers = localStorage.getItem('esca-webkasa-suppliers');
-      
-      if (savedCustomers) {
+    const fetchCustomers = async () => {
+      try {
+        // Try backend first (authoritative source)
+        const backendCustomers = await apiGet<Array<{
+          id: string;
+          name: string; // Backend format: "kod - ad"
+          phone: string | null;
+          email: string | null;
+          taxNo: string | null;
+          address: string | null;
+          isActive: boolean;
+        }>>('/api/customers');
+        
+        // Convert backend format to frontend format
+        // Backend name = "kod - ad", split to get kod and ad
+        const mappedCustomers: Customer[] = backendCustomers.map((c) => {
+          const parts = c.name.split(' - ');
+          const kod = parts[0] || '';
+          const ad = parts.slice(1).join(' - ') || c.name;
+          return {
+            id: c.id,
+            kod,
+            ad,
+            aktifMi: c.isActive,
+          };
+        });
+        
+        setCustomers(mappedCustomers);
+        
+        // Update localStorage cache (for offline/performance, not as source of truth)
         try {
-          const parsed = JSON.parse(savedCustomers);
-          if (Array.isArray(parsed)) {
-            setCustomers(parsed);
-          }
+          localStorage.setItem('esca-webkasa-customers', JSON.stringify(mappedCustomers));
         } catch (e) {
-          console.error('Failed to parse customers from localStorage:', e);
+          console.warn('Failed to update customers cache in localStorage:', e);
+        }
+      } catch (error: any) {
+        console.error('Failed to load customers from backend:', error);
+        
+        // Fallback: Try localStorage cache if backend is unavailable
+        // But this is NOT the source of truth - just a temporary fallback
+        if (error?.message?.includes('Failed to fetch') || error?.message?.includes('ERR_CONNECTION_REFUSED')) {
+          console.warn('Backend unavailable, trying localStorage cache...');
+          try {
+            const savedCustomers = localStorage.getItem('esca-webkasa-customers');
+            if (savedCustomers) {
+              const parsed = JSON.parse(savedCustomers);
+              if (Array.isArray(parsed)) {
+                setCustomers(parsed);
+                console.warn('Using cached customers from localStorage (backend unavailable)');
+              }
+            }
+          } catch (e) {
+            console.error('Failed to parse customers from localStorage:', e);
+          }
         }
       }
-      
-      if (savedSuppliers) {
+    };
+    
+    fetchCustomers();
+  }, []);
+
+  // Suppliers: Load from backend (authoritative source)
+  useEffect(() => {
+    const fetchSuppliers = async () => {
+      try {
+        // Try backend first (authoritative source)
+        const backendSuppliers = await apiGet<Array<{
+          id: string;
+          name: string; // Backend format: "kod - ad"
+          phone: string | null;
+          email: string | null;
+          taxNo: string | null;
+          address: string | null;
+          isActive: boolean;
+        }>>('/api/suppliers');
+        
+        // Convert backend format to frontend format
+        const mappedSuppliers: Supplier[] = backendSuppliers.map((s) => {
+          const parts = s.name.split(' - ');
+          const kod = parts[0] || '';
+          const ad = parts.slice(1).join(' - ') || s.name;
+          return {
+            id: s.id,
+            kod,
+            ad,
+            aktifMi: s.isActive,
+          };
+        });
+        
+        setSuppliers(mappedSuppliers);
+        
+        // Cache in localStorage (optional, for offline fallback)
         try {
-          const parsed = JSON.parse(savedSuppliers);
-          if (Array.isArray(parsed)) {
-            setSuppliers(parsed);
+          localStorage.setItem('esca-webkasa-suppliers', JSON.stringify(mappedSuppliers));
+        } catch (e) {
+          console.warn('Failed to update suppliers cache in localStorage:', e);
+        }
+      } catch (error: any) {
+        console.error('Failed to load suppliers from backend:', error);
+        // Fallback to localStorage if backend is unavailable
+        try {
+          const savedSuppliers = localStorage.getItem('esca-webkasa-suppliers');
+          if (savedSuppliers) {
+            const parsed = JSON.parse(savedSuppliers);
+            if (Array.isArray(parsed)) {
+              setSuppliers(parsed);
+              console.warn('Using cached suppliers from localStorage (backend unavailable)');
+            }
           }
         } catch (e) {
           console.error('Failed to parse suppliers from localStorage:', e);
         }
       }
-    } catch (error) {
-      console.error('Failed to load customers/suppliers from localStorage:', error);
-    }
+    };
+    
+    fetchSuppliers();
   }, []);
 
   // Load dashboard summary (authoritative balance source + upcoming payments)
@@ -878,7 +1021,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             kodu: bank.accountNo ? bank.accountNo.substring(0, 4).toUpperCase() : 'BNK',
             hesapAdi: bank.name + (bank.accountNo ? ` - ${bank.accountNo}` : ''),
             iban: bank.iban || undefined,
-            acilisBakiyesi: bank.currentBalance,
+            // BUG FIX: Use openingBalance (NOT currentBalance) for acilisBakiyesi
+            acilisBakiyesi: (bank as any).openingBalance ?? 0,
             aktifMi: bank.isActive,
             cekKarnesiVarMi: flags.cekKarnesiVarMi,
             posVarMi: flags.posVarMi,
@@ -949,7 +1093,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                 kodu: bank.accountNo ? bank.accountNo.substring(0, 4).toUpperCase() : 'BNK',
                 hesapAdi: bank.name + (bank.accountNo ? ` - ${bank.accountNo}` : ''),
                 iban: bank.iban || undefined,
-                acilisBakiyesi: bank.currentBalance,
+                // BUG FIX: Use openingBalance (NOT currentBalance) for acilisBakiyesi
+                acilisBakiyesi: (bank as any).openingBalance ?? 0,
                 aktifMi: bank.isActive,
                 cekKarnesiVarMi: false,
                 posVarMi: false,
@@ -2580,7 +2725,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                 kodu: bank.accountNo ? bank.accountNo.substring(0, 4).toUpperCase() : 'BNK',
                 hesapAdi: bank.name + (bank.accountNo ? ` - ${bank.accountNo}` : ''),
                 iban: bank.iban || undefined,
-                acilisBakiyesi: bank.currentBalance,
+                // BUG FIX: Use openingBalance (NOT currentBalance) for acilisBakiyesi
+                acilisBakiyesi: (bank as any).openingBalance ?? 0,
                 aktifMi: bank.isActive,
                 cekKarnesiVarMi: flags.cekKarnesiVarMi,
                 posVarMi: flags.posVarMi,
@@ -2629,6 +2775,10 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             // BUG-2 FIX: Update state - buildUpcomingPayments useMemo will automatically recalculate
             setBanks(mappedBanks);
             setCreditCards(mappedCreditCards);
+            
+            // BUG FIX: Reload dashboard summary to update upcoming payments
+            // This ensures that newly added credit cards/loans appear in upcoming payments immediately
+            await loadDashboardSummary();
           } catch (error) {
             console.error('Failed to reload data after settings close:', error);
             // Don't show alert for connection errors - backend might be down

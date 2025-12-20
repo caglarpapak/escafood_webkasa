@@ -65,6 +65,28 @@ enum LoanInstallmentStatus {
   GECIKMIS
 }
 
+model PosTerminal {
+  id            String    @id @default(uuid())
+  bankId        String
+  name          String    // POS terminal name
+  commissionRate Decimal   @db.Decimal(5, 4) // Commission rate (e.g., 0.0250 for 2.5%)
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  createdBy     String
+  updatedAt     DateTime?
+  updatedBy     String?
+  deletedAt     DateTime?
+  deletedBy     String?
+
+  bank          Bank      @relation(fields: [bankId], references: [id])
+
+  createdByUser User      @relation("PosTerminalCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?     @relation("PosTerminalUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByUser User?     @relation("PosTerminalDeletedBy", fields: [deletedBy], references: [id])
+
+  @@map("PosTerminal")
+}
+
 model User {
   id           String    @id @default(uuid())
   email        String    @unique
@@ -113,25 +135,31 @@ model User {
   loanInstallmentsCreated LoanInstallment[] @relation("LoanInstallmentCreatedBy")
   loanInstallmentsUpdated LoanInstallment[] @relation("LoanInstallmentUpdatedBy")
   loanInstallmentsDeleted LoanInstallment[] @relation("LoanInstallmentDeletedBy")
+
+  posTerminalsCreated PosTerminal[] @relation("PosTerminalCreatedBy")
+  posTerminalsUpdated PosTerminal[] @relation("PosTerminalUpdatedBy")
+  posTerminalsDeleted PosTerminal[] @relation("PosTerminalDeletedBy")
 }
 
 model Bank {
-  id        String    @id @default(uuid())
-  name      String
-  accountNo String?
-  iban      String?
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  createdBy String
-  updatedAt DateTime?
-  updatedBy String?
-  deletedAt DateTime?
-  deletedBy String?
+  id             String    @id @default(uuid())
+  name           String
+  accountNo      String?
+  iban           String?
+  openingBalance Decimal?  @db.Decimal(18, 2) // CRITICAL: Opening balance stored in Bank table, NOT as transaction
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  createdBy      String
+  updatedAt      DateTime?
+  updatedBy      String?
+  deletedAt      DateTime?
+  deletedBy      String?
 
   transactions Transaction[]
   creditCards  CreditCard[]
   cheques      Cheque[]
   loans        Loan[]
+  posTerminals PosTerminal[]
 
   createdByUser User  @relation("BankCreatedBy", fields: [createdBy], references: [id])
   updatedByUser User? @relation("BankUpdatedBy", fields: [updatedBy], references: [id])

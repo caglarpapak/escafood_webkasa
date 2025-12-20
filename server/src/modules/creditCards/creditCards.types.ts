@@ -5,12 +5,10 @@ export interface CreditCardDto {
   name: string;
   bankId: string | null;
   limit: number | null;
-  sonEkstreBorcu: number;
-  manualGuncelBorc: number | null;
-  closingDay: number | null;
-  dueDay: number | null;
   sonEkstreBorcu: number; // Last statement balance (from DB)
   manualGuncelBorc: number | null; // Manual current debt override (null = calculate from operations)
+  closingDay: number | null;
+  dueDay: number | null;
   isActive: boolean;
   createdAt: string;
   createdBy: string;
@@ -53,8 +51,6 @@ export interface CreateCreditCardDto {
   manualGuncelBorc?: number | null;
   closingDay?: number | null;
   dueDay?: number | null;
-  sonEkstreBorcu?: number;
-  manualGuncelBorc?: number | null;
   isActive?: boolean;
 }
 
@@ -66,8 +62,6 @@ export interface UpdateCreditCardDto {
   manualGuncelBorc?: number | null;
   closingDay?: number | null;
   dueDay?: number | null;
-  sonEkstreBorcu?: number;
-  manualGuncelBorc?: number | null;
   isActive?: boolean;
 }
 

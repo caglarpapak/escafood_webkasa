@@ -59,11 +59,18 @@ export class DashboardService {
       documentNo: tx.documentNo,
     })), null, 2));
     
+    // CRITICAL FIX: Exclude opening balance transactions from bankDelta sum
+    // Opening balance is stored in Bank.openingBalance, NOT in transactions
     const bankBalanceGroups = await prisma.transaction.groupBy({
       by: ['bankId'],
       where: {
         deletedAt: null,
         bankId: { not: null },
+        // CRITICAL: Exclude opening transactions, but include null descriptions (normal transactions)
+        OR: [
+          { description: { not: 'Açılış bakiyesi' } },
+          { description: null },
+        ],
       },
       _sum: {
         bankDelta: true,

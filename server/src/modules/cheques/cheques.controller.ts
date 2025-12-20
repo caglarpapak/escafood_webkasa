@@ -10,6 +10,8 @@ import {
   payableChequesQuerySchema,
   payChequeSchema,
 } from './cheques.validation';
+import { ChequeListQuery } from './cheques.types';
+import { ChequeStatus } from '@prisma/client';
 import { getUserId } from '../../config/auth';
 
 const service = new ChequesService();
@@ -29,7 +31,12 @@ function handleError(res: Response, error: unknown) {
 export class ChequesController {
   async list(req: Request, res: Response) {
     try {
-      const query = chequeQuerySchema.parse(req.query);
+      const rawQuery = chequeQuerySchema.parse(req.query);
+      // Type assertion: status can be 'ALL' but service expects ChequeStatus | undefined
+      const query: ChequeListQuery = {
+        ...rawQuery,
+        status: rawQuery.status === 'ALL' ? undefined : rawQuery.status as ChequeStatus | undefined,
+      };
       const cheques = await service.listCheques(query);
       res.json(cheques);
     } catch (error) {

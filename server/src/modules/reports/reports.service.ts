@@ -178,12 +178,20 @@ export class ReportsService {
     const fromDate = query.from || firstOfMonth;
     const toDate = query.to || lastOfMonth;
 
+    // CRITICAL FIX: Exclude opening balance transactions from reports
+    // Opening balance is stored in Bank.openingBalance, NOT in transactions
+    // IMPORTANT: Use OR condition to handle null descriptions (normal transactions don't have "Açılış bakiyesi")
     const where: any = {
       deletedAt: null,
       isoDate: {
         gte: fromDate,
         lte: toDate,
       },
+      // Exclude opening transactions, but include null descriptions (normal transactions)
+      OR: [
+        { description: { not: 'Açılış bakiyesi' } },
+        { description: null },
+      ],
     };
 
     if (query.user) {
@@ -302,6 +310,30 @@ export class ReportsService {
     }
     const cashNet = cashInTotal - cashOutTotal;
 
+    // CRITICAL FIX: Calculate bank opening/closing balances from Bank.openingBalance (NOT transactions)
+    // Opening balance is stored in Bank table, NOT as transactions
+    const allBanks = await prisma.bank.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        openingBalance: true,
+      },
+    });
+
+    // Calculate total opening balance from all active banks
+    const bankOpeningTotal = allBanks.reduce((sum, bank) => {
+      return sum + (bank.openingBalance ? Number(bank.openingBalance) : 0);
+    }, 0);
+
+    // Calculate net delta from transactions in date range (already calculated as bankNet)
+    const bankNetDelta = bankNet; // This is the net delta from transactions in the date range
+
+    // Closing balance = opening + net delta
+    const bankClosingTotal = bankOpeningTotal + bankNetDelta;
+
     return {
       totalIn,
       totalOut,
@@ -309,6 +341,9 @@ export class ReportsService {
       bankInTotal,
       bankOutTotal,
       bankNet,
+      bankOpeningTotal, // NEW: Opening balance from Bank.openingBalance
+      bankNetDelta, // NEW: Net delta from transactions (same as bankNet)
+      bankClosingTotal, // NEW: Opening + Net Delta
       cashInTotal,
       cashOutTotal,
       cashNet,
@@ -323,6 +358,11 @@ export class ReportsService {
   private getNakitAkisGiris(tx: any): number {
     switch (tx.type) {
       case 'NAKIT_TAHSILAT':
+        // If source is BANKA, use bankDelta (bank cash in)
+        if (tx.source === 'BANKA' && Number(tx.bankDelta) > 0) {
+          return Number(tx.bankDelta);
+        }
+        // If source is KASA, use incoming (cash in)
         return Number(tx.incoming);
 
       case 'BANKA_HAVALE_GIRIS':
@@ -368,6 +408,11 @@ export class ReportsService {
   private getNakitAkisCikis(tx: any): number {
     switch (tx.type) {
       case 'NAKIT_ODEME':
+        // If source is BANKA, use bankDelta (bank cash out)
+        if (tx.source === 'BANKA' && Number(tx.bankDelta) < 0) {
+          return Math.abs(Number(tx.bankDelta));
+        }
+        // If source is KASA, use outgoing (cash out)
         return Number(tx.outgoing);
 
       case 'BANKA_HAVALE_CIKIS':

@@ -336,7 +336,7 @@ export class LoansService {
     isoDate: string,
     description: string | null,
     createdBy: string
-  ): Promise<{ loan: LoanDto; transaction: any }> {
+  ): Promise<{ ok: boolean; paidInstallmentId: string; loan: LoanDto; transaction: any }> {
     const installment = await prisma.loanInstallment.findUnique({
       where: { id: installmentId },
       include: {
