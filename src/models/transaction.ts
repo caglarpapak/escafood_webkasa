@@ -2,7 +2,11 @@ export type DailyTransactionType =
   | 'NAKIT_TAHSILAT'
   | 'NAKIT_ODEME'
   | 'KASA_BANKA_TRANSFER'
+  | 'KASA_BANKA_TRANSFER_OUT'
+  | 'KASA_BANKA_TRANSFER_IN'
   | 'BANKA_KASA_TRANSFER'
+  | 'BANKA_KASA_TRANSFER_OUT'
+  | 'BANKA_KASA_TRANSFER_IN'
   | 'BANKA_HAVALE_GIRIS'
   | 'BANKA_HAVALE_CIKIS'
   | 'POS_TAHSILAT_BRUT'
@@ -29,7 +33,11 @@ export const DAILY_TRANSACTION_TYPE_LABELS: Record<DailyTransactionType, string>
   NAKIT_TAHSILAT: 'Nakit Tahsilat',
   NAKIT_ODEME: 'Nakit Ödeme',
   KASA_BANKA_TRANSFER: 'Kasa → Banka Transfer',
+  KASA_BANKA_TRANSFER_OUT: 'Kasa → Banka Transfer (Çıkış)',
+  KASA_BANKA_TRANSFER_IN: 'Kasa → Banka Transfer (Giriş)',
   BANKA_KASA_TRANSFER: 'Banka → Kasa Transfer',
+  BANKA_KASA_TRANSFER_OUT: 'Banka → Kasa Transfer (Çıkış)',
+  BANKA_KASA_TRANSFER_IN: 'Banka → Kasa Transfer (Giriş)',
   BANKA_HAVALE_GIRIS: 'Banka Havale Girişi',
   BANKA_HAVALE_CIKIS: 'Banka Havale Çıkışı',
   POS_TAHSILAT_BRUT: 'POS Tahsilat (Brüt)',
@@ -71,6 +79,7 @@ export interface DailyTransaction {
   source: DailyTransactionSource;
   counterparty: string;
   description: string;
+  category?: string; // TÜR / AÇIKLAMA / KATEGORİ AYRIMI - 4.2: Kategori (vergi, maaş, sgk, fatura vs.)
   incoming: number;
   outgoing: number;
   balanceAfter: number;
@@ -80,7 +89,8 @@ export interface DailyTransaction {
   displayOutgoing?: number;
 
   createdAtIso?: string;
-  createdBy?: string;
+  createdBy?: string; // KULLANICI / AUTH / AUDIT - 7.1: createdByUserId (ASLA gösterilmez)
+  createdByEmail?: string; // KULLANICI / AUTH / AUDIT - 7.1: createdByEmail (UI'da email gösterilir)
   attachmentType?: 'POS_SLIP' | 'CHEQUE';
   attachmentImageDataUrl?: string;
   attachmentImageName?: string;

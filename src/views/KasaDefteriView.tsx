@@ -9,6 +9,7 @@ import { formatTl } from '../utils/money';
 import { HomepageIcon } from '../components/HomepageIcon';
 import { apiGet } from '../utils/api';
 import { printReport } from '../utils/pdfExport';
+import { resolveDisplayAmounts } from '../utils/transactionDisplay';
 
 interface KasaDefteriViewProps {
   onBackToDashboard: () => void;
@@ -30,7 +31,12 @@ type SortDir = 'asc' | 'desc';
 type QuickRange = 'NONE' | 'TODAY' | 'WEEK' | 'MONTH' | 'YEAR';
 
 function todayIsoLocal() {
-  return new Date().toISOString().slice(0, 10);
+  // TIMEZONE FIX: Use local date instead of UTC
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function getWeekRange(today: Date) {
@@ -69,15 +75,23 @@ export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewPr
   const [transactions, setTransactions] = useState<DailyTransaction[]>([]);
   const [banks, setBanks] = useState<Array<{ id: string; name: string }>>([]); // Fix Bug 4: Banks for bank name display
   const [loading, setLoading] = useState(true);
-  const [filterStartIso, setFilterStartIso] = useState('');
-  const [filterEndIso, setFilterEndIso] = useState('');
+  
+  // RAPOR DEFAULT DAVRANIŞLARI - 6: Kasa Defteri → Bu Ay (ayın başı → bugün)
+  const today = todayIsoLocal();
+  const monthStart = (() => {
+    const [y, m] = today.split('-');
+    return `${y}-${m}-01`;
+  })();
+  
+  const [filterStartIso, setFilterStartIso] = useState(monthStart);
+  const [filterEndIso, setFilterEndIso] = useState(today);
   const [filterDocumentNo, setFilterDocumentNo] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterCounterparty, setFilterCounterparty] = useState('');
   const [filterDescription, setFilterDescription] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('isoDate');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
-  const [quickRange, setQuickRange] = useState<QuickRange>('NONE');
+  const [quickRange, setQuickRange] = useState<QuickRange>('MONTH'); // RAPOR DEFAULT DAVRANIŞLARI - 6: Default to current month
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [previewTitle, setPreviewTitle] = useState('');
   const [openingBalance, setOpeningBalance] = useState(0);
@@ -167,7 +181,7 @@ export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewPr
           bankId: tx.bankId || undefined, // Fix Bug 4: Include bankId from backend
           bankName: tx.bankName || undefined, // Fix Bug 5: Use bankName from backend
           creditCardId: tx.creditCardId || undefined, // Fix Bug 5: Include creditCardId
-          bankDelta: undefined, // Not provided by backend for Kasa Defteri
+          bankDelta: tx.bankDelta !== null && tx.bankDelta !== undefined ? tx.bankDelta : undefined, // Include bankDelta for bank transfer tracking
           displayIncoming: tx.displayIncoming ?? undefined, // BUG 2 FIX: Use displayIncoming from backend for bank cash in
           displayOutgoing: tx.displayOutgoing ?? undefined, // BUG 2 FIX: Use displayOutgoing from backend for bank cash out
         }));
@@ -205,14 +219,6 @@ export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewPr
     return formatTl(value);
   };
 
-  const renderCreated = (tx: DailyTransaction) => {
-    if (tx.createdAtIso && tx.createdBy) {
-      const datePart = isoToDisplay(tx.createdAtIso.slice(0, 10));
-      const timePart = tx.createdAtIso.slice(11, 19);
-      return `${datePart} ${timePart} – ${tx.createdBy}`;
-    }
-    return '-';
-  };
 
   const applyQuickRange = (range: QuickRange) => {
     const today = new Date();
@@ -264,7 +270,7 @@ export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewPr
             <img
               src="https://esca-food.com/image/cache/catalog/esca%20food%20logosu%20tek_-700x800.png"
               alt="Esca Food"
-              className="h-[84px] object-contain"
+              className="h-[118px] object-contain"
             />
             <img
               src="https://esca-food.com/image/cache/catalog/web%20kasa%20logosu%20tek_-700x800.png"
@@ -381,20 +387,18 @@ export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewPr
               <th className="py-2 px-2 text-right cursor-pointer" onClick={() => toggleSort('balanceAfter')}>
                 Bakiye
               </th>
-              <th className="py-2 px-2 text-left">Kaydedildi</th>
             </tr>
           </thead>
           <tbody>
             {sortedTransactions.length === 0 && (
               <tr>
-                <td colSpan={12} className="py-4 text-center text-slate-500">
+                <td colSpan={11} className="py-4 text-center text-slate-500">
                   Kayıt bulunamadı.
                 </td>
               </tr>
             )}
             {sortedTransactions.map((tx) => {
-              const incomingVal = tx.displayIncoming ?? tx.incoming;
-              const outgoingVal = tx.displayOutgoing ?? tx.outgoing;
+              const { giris, cikis } = resolveDisplayAmounts(tx);
               return (
                 <tr key={tx.id} className="border-b last:border-0">
                   <td className="py-2 px-2">{tx.displayDate}</td>
@@ -403,7 +407,14 @@ export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewPr
                   <td className="py-2 px-2">{getTransactionSourceLabel(tx.source)}</td>
                   <td className="py-2 px-2">{getBankName(tx, banks) || '-'}</td>
                   <td className="py-2 px-2">{tx.counterparty}</td>
-                  <td className="py-2 px-2">{tx.description}</td>
+                  <td className="py-2 px-2">
+                    {tx.description}
+                    {tx.bankDelta !== null && tx.bankDelta !== undefined && tx.bankDelta !== 0 && (
+                      <span className="text-xs text-slate-500 block mt-1">
+                        {tx.bankDelta > 0 ? 'Banka girişi' : 'Banka çıkışı'}: {formatTl(Math.abs(tx.bankDelta))}
+                      </span>
+                    )}
+                  </td>
                   <td className="py-2 px-2">
                     {tx.attachmentType === 'POS_SLIP' && tx.attachmentImageDataUrl ? (
                       <button
@@ -419,10 +430,9 @@ export default function KasaDefteriView({ onBackToDashboard }: KasaDefteriViewPr
                       '-'
                     )}
                   </td>
-                  <td className="py-2 px-2 text-right text-emerald-600">{renderMoney(incomingVal)}</td>
-                  <td className="py-2 px-2 text-right text-rose-600">{renderMoney(outgoingVal)}</td>
+                  <td className="py-2 px-2 text-right text-emerald-600">{giris !== null ? renderMoney(giris) : '-'}</td>
+                  <td className="py-2 px-2 text-right text-rose-600">{cikis !== null ? renderMoney(cikis) : '-'}</td>
                   <td className="py-2 px-2 text-right font-semibold">{renderMoney(tx.balanceAfter)}</td>
-                  <td className="py-2 px-2 text-left">{renderCreated(tx)}</td>
                 </tr>
               );
             })}

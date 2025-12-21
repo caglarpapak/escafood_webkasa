@@ -232,7 +232,7 @@ export class DashboardService {
         maturityDate: { gte: todayStartIso }, // Only future due dates (Date object comparison)
       },
       include: {
-        bank: {
+        depositBank: {
           select: {
             id: true,
             name: true,
@@ -268,7 +268,7 @@ export class DashboardService {
       upcomingPayments.push({
         id: `cek-${cheque.id}`,
         category: 'CEK',
-        bankName: cheque.bank?.name || '-',
+        bankName: cheque.issuerBankName || '-', // Çeki düzenleyen banka adı
         name: counterpartyName,
         dueDateIso: cheque.maturityDate,
         dueDateDisplay,

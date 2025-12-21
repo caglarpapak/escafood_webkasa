@@ -107,22 +107,35 @@ export class CustomersService {
         });
         results.push(created);
       } else {
-        // Update existing customer
+        // Check if customer exists before trying to update
         const existing = await prisma.customer.findUnique({ where: { id: item.id } });
         if (!existing || existing.deletedAt) {
-          throw new Error(`Customer not found: ${item.id}`);
+          // Customer doesn't exist or is deleted - treat as new customer
+          const created = await prisma.customer.create({
+            data: {
+              name,
+              phone: null,
+              email: null,
+              taxNo: null,
+              address: null,
+              isActive: item.aktifMi ?? true,
+              createdBy: userId,
+            },
+          });
+          results.push(created);
+        } else {
+          // Update existing customer
+          const updated = await prisma.customer.update({
+            where: { id: item.id },
+            data: {
+              name,
+              isActive: item.aktifMi ?? true,
+              updatedAt: new Date(),
+              updatedBy: userId,
+            },
+          });
+          results.push(updated);
         }
-
-        const updated = await prisma.customer.update({
-          where: { id: item.id },
-          data: {
-            name,
-            isActive: item.aktifMi ?? true,
-            updatedAt: new Date(),
-            updatedBy: userId,
-          },
-        });
-        results.push(updated);
       }
     }
 

@@ -10,9 +10,13 @@ export interface ChequeDto {
   direction: ChequeDirection;
   customerId: string | null;
   supplierId: string | null;
-  bankId: string | null;
+  issuerBankName: string; // Çeki düzenleyen banka adı (çekin üstündeki banka)
+  depositBankId: string | null; // Çeki tahsile verdiğimiz banka (bizim bankamız)
+  drawerName: string;
+  payeeName: string;
   description: string | null;
   attachmentId: string | null;
+  imageDataUrl: string | null;
   createdAt: string;
   createdBy: string;
   updatedAt: string | null;
@@ -20,12 +24,12 @@ export interface ChequeDto {
   deletedAt: string | null;
   deletedBy: string | null;
   // Relations (optional, populated when needed)
-  bank?: {
+  depositBank?: {
     id: string;
     name: string;
     accountNo: string | null;
     iban: string | null;
-  } | null;
+  } | null; // Çeki tahsile verdiğimiz banka (bizim bankamız)
   customer?: {
     id: string;
     name: string;
@@ -42,11 +46,15 @@ export interface CreateChequeDto {
   entryDate: string;
   maturityDate: string;
   direction: ChequeDirection;
+  drawerName: string;
+  payeeName?: string; // Optional, backend will set default if not provided
+  issuerBankName: string; // Çeki düzenleyen banka adı (zorunlu)
+  depositBankId?: string | null; // Çeki tahsile verdiğimiz banka (opsiyonel, sadece tahsile ver işleminde set edilir)
   customerId?: string | null;
   supplierId?: string | null;
-  bankId?: string | null;
   description?: string | null;
   attachmentId?: string | null;
+  imageDataUrl?: string | null; // MVP: Base64 data URL
 }
 
 export interface UpdateChequeDto {
@@ -54,9 +62,10 @@ export interface UpdateChequeDto {
   amount?: number;
   entryDate?: string;
   maturityDate?: string;
+  issuerBankName?: string; // Çek bankası adı
+  depositBankId?: string | null; // Çeki tahsile verdiğimiz banka
   customerId?: string | null;
   supplierId?: string | null;
-  bankId?: string | null;
   description?: string | null;
   attachmentId?: string | null;
 }
@@ -64,7 +73,7 @@ export interface UpdateChequeDto {
 export interface UpdateChequeStatusDto {
   newStatus: ChequeStatus;
   isoDate: string;
-  bankId?: string | null;
+  depositBankId?: string | null; // Çeki tahsile verdiğimiz banka (BANKADA_TAHSILDE için zorunlu)
   supplierId?: string | null; // BUG 7 FIX: Supplier ID when cheque is given to supplier
   description?: string | null;
 }

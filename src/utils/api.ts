@@ -50,6 +50,16 @@ export async function apiRequest<T>(
       errorData,
       url,
     });
+    // Log detailed error information
+    if (errorData) {
+      console.error('Error details:', {
+        message: errorData.message,
+        error: errorData.error,
+        code: errorData.code,
+        details: errorData.details,
+        stack: errorData.stack,
+      });
+    }
     
     // Extract validation error details if available
     let errorMessage = errorData.message || errorData.error || `HTTP ${response.status}`;

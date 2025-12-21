@@ -111,18 +111,34 @@ export class PosTerminalsService {
         );
         results.push(created);
       } else {
-        // Update existing POS terminal
-        const updated = await this.updatePosTerminal(
-          item.id,
-          {
-            bankId: item.bankaId,
-            name: item.posAdi,
-            commissionRate: item.komisyonOrani,
-            isActive: item.aktifMi,
-          },
-          userId
-        );
-        results.push(updated);
+        // Check if terminal exists before trying to update
+        const existing = await prisma.posTerminal.findUnique({ where: { id: item.id } });
+        if (!existing || existing.deletedAt) {
+          // Terminal doesn't exist or is deleted - treat as new terminal
+          const created = await this.createPosTerminal(
+            {
+              bankId: item.bankaId,
+              name: item.posAdi,
+              commissionRate: item.komisyonOrani,
+              isActive: item.aktifMi,
+            },
+            userId
+          );
+          results.push(created);
+        } else {
+          // Update existing POS terminal
+          const updated = await this.updatePosTerminal(
+            item.id,
+            {
+              bankId: item.bankaId,
+              name: item.posAdi,
+              commissionRate: item.komisyonOrani,
+              isActive: item.aktifMi,
+            },
+            userId
+          );
+          results.push(updated);
+        }
       }
     }
     return results;

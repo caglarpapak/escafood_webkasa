@@ -29,6 +29,8 @@ function getMonthRange() {
 }
 
 export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Props) {
+  // RAPOR DEFAULT DAVRANIŞLARI - 6: Nakit Akış → Kullanıcı seçer
+  // Default to current month, but user can change
   const monthRange = getMonthRange();
   const [fromDate, setFromDate] = useState(monthRange.first);
   const [toDate, setToDate] = useState(monthRange.last);
@@ -99,7 +101,8 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
   }, [fromDate, toDate, scope, userFilter, searchText]);
 
   const distinctUsers = useMemo(() => {
-    return Array.from(new Set(safeTransactions.map((t) => t.createdBy).filter(Boolean))) as string[];
+    // KULLANICI / AUTH / AUDIT - 7.1: UI'da email gösterilir, x-user-id ASLA gösterilmez
+    return Array.from(new Set(safeTransactions.map((t) => t.createdByEmail || t.createdBy).filter(Boolean))) as string[];
   }, [safeTransactions]);
 
   const resolveIncomingAmount = (tx: DailyTransaction) => {
@@ -131,7 +134,9 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
       if (!fromDate || !toDate) return false;
       if (tx.isoDate < fromDate || tx.isoDate > toDate) return false;
       if (userFilter !== 'HEPSI') {
-        if (!tx.createdBy || tx.createdBy !== userFilter) return false;
+        // KULLANICI / AUTH / AUDIT - 7.1: UI'da email gösterilir, x-user-id ASLA gösterilmez
+        const userEmail = tx.createdByEmail || tx.createdBy;
+        if (!userEmail || userEmail !== userFilter) return false;
       }
       if (scope === 'NAKIT') {
         const cashMovement = (tx.incoming || 0) !== 0 || (tx.outgoing || 0) !== 0;
@@ -267,7 +272,7 @@ export function NakitAkisReport({ transactions, banks, onBackToDashboard }: Prop
               padding-bottom: 10px;
             }
             .header img {
-              height: 50px;
+              height: 70px;
             }
             .title-section {
               text-align: center;

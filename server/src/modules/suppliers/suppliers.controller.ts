@@ -2,7 +2,8 @@ import { Request, Response } from 'express';
 import { ZodError } from 'zod';
 import { SuppliersService } from './suppliers.service';
 import { bulkSaveSupplierSchema, createSupplierSchema, supplierIdParamSchema, deleteSupplierSchema, updateSupplierSchema } from './suppliers.validation';
-import { getUserId } from '../../config/auth';
+import { getUserId, getUserInfo } from '../../config/auth';
+import { logAudit, createDiff } from '../auditLog/auditLog.helper';
 import { BadRequestError } from '../../utils/errors';
 
 const service = new SuppliersService();
@@ -33,8 +34,19 @@ export class SuppliersController {
   async create(req: Request, res: Response) {
     try {
       const payload = createSupplierSchema.parse(req.body);
-      const createdBy = getUserId(req);
+      // İŞLEM LOGU (AUDIT LOG) - 8.1: Tekil tedarikçi ekleme loglanır
+      const { userId: createdBy, userEmail } = await getUserInfo(req);
       const supplier = await service.createSupplier(payload, createdBy);
+      
+      await logAudit(
+        userEmail,
+        'CREATE',
+        'SUPPLIER',
+        `Tedarikçi oluşturuldu: ${supplier.name}`,
+        supplier.id,
+        { supplier: { name: supplier.name, phone: supplier.phone, email: supplier.email } }
+      );
+      
       res.status(201).json(supplier);
     } catch (error) {
       handleError(res, error);
@@ -68,8 +80,19 @@ export class SuppliersController {
   async bulkSave(req: Request, res: Response) {
     try {
       const payload = bulkSaveSupplierSchema.parse(req.body);
-      const userId = getUserId(req);
+      // İŞLEM LOGU (AUDIT LOG) - 8.1: CSV importlar loglanır
+      const { userId, userEmail } = await getUserInfo(req);
       const suppliers = await service.bulkSaveSuppliers(payload, userId);
+      
+      await logAudit(
+        userEmail,
+        'IMPORT',
+        'SUPPLIER',
+        `${suppliers.length} tedarikçi CSV'den içe aktarıldı`,
+        null,
+        { count: suppliers.length, suppliers: suppliers.map(s => ({ id: s.id, name: s.name })) }
+      );
+      
       res.json(suppliers);
     } catch (error) {
       handleError(res, error);

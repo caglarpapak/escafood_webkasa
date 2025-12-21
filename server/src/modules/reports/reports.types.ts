@@ -30,6 +30,7 @@ export interface KasaDefteriResponse {
     displayOutgoing: number | null; // BUG 2 FIX: For bank cash out display
     bankId: string | null;
     bankName: string | null;
+    bankDelta: number | null; // For bank transfer tracking
     creditCardId: string | null;
     creditCardName: string | null; // Include credit card name
   }[];

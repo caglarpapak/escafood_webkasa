@@ -8,6 +8,7 @@ export interface TransactionDto {
   source: DailyTransactionSource;
   counterparty: string | null;
   description: string | null;
+  category: string | null;
   incoming: number;
   outgoing: number;
   bankDelta: number;
@@ -22,8 +23,10 @@ export interface TransactionDto {
   supplierId: string | null;
   attachmentId: string | null;
   loanInstallmentId: string | null;
+  transferGroupId: string | null;
   createdAt: string;
-  createdBy: string;
+  createdBy: string; // KULLANICI / AUTH / AUDIT - 7.1: createdByUserId (User.id)
+  createdByEmail: string; // KULLANICI / AUTH / AUDIT - 7.1: createdByEmail (UI'da email gösterilir, x-user-id ASLA gösterilmez)
   updatedAt: string | null;
   updatedBy: string | null;
   deletedAt: string | null;
@@ -37,6 +40,7 @@ export interface CreateTransactionDto {
   source: DailyTransactionSource;
   counterparty?: string | null;
   description?: string | null;
+  category?: string | null;
   incoming?: number;
   outgoing?: number;
   bankDelta?: number;
@@ -59,6 +63,7 @@ export interface UpdateTransactionDto {
   source?: DailyTransactionSource;
   counterparty?: string | null;
   description?: string | null;
+  category?: string | null;
   incoming?: number;
   outgoing?: number;
   bankDelta?: number;
@@ -85,6 +90,7 @@ export interface TransactionListQuery {
   bankId?: string;
   creditCardId?: string;
   createdBy?: string;
+  createdByEmail?: string; // Filter by user email (for UI filtering)
   search?: string;
   sortKey?: 'isoDate' | 'documentNo' | 'type' | 'counterparty' | 'incoming' | 'outgoing' | 'balanceAfter';
   sortDir?: 'asc' | 'desc';

@@ -17,6 +17,7 @@ import { getNextBelgeNo } from './utils/documentNo';
 import { generateId } from './utils/id';
 import { getCreditCardNextDue } from './utils/creditCard';
 import { apiGet, apiPost, apiDelete } from './utils/api';
+import { resolveDisplayAmounts } from './utils/transactionDisplay';
 import { computeRunningBalance, BalanceContext } from './utils/balance';
 import NakitGiris, { NakitGirisFormValues } from './forms/NakitGiris';
 import NakitCikis, { NakitCikisFormValues } from './forms/NakitCikis';
@@ -618,16 +619,20 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
           cekNo: c.cekNo,
           tutar: c.amount,
           vadeTarihi: c.maturityDate,
-          bankaId: c.bankId || undefined,
-          bankaAdi: '', // Will be populated from banks prop if needed
-          duzenleyen: c.customer?.name || c.supplier?.name || '',
-          lehtar: c.supplier?.name || c.customer?.name || `Çek ${c.cekNo}`,
+          bankaId: c.depositBankId || undefined, // Çeki tahsile verdiğimiz banka (bizim bankamız)
+          bankaAdi: c.depositBank?.name || undefined, // Backend'den gelen deposit bank adı
+          issuerBankName: c.issuerBankName || undefined, // Çeki düzenleyen banka adı
+          // CRITICAL: drawerName ve payeeName backend'den korunmalı (tedarikçi/müşteri adı ile değiştirilmemeli)
+          duzenleyen: c.drawerName || c.customer?.name || c.supplier?.name || '', // Backend'den gelen drawerName
+          lehtar: c.payeeName || c.supplier?.name || c.customer?.name || `Çek ${c.cekNo}`, // Backend'den gelen payeeName
           musteriId: c.customerId || undefined,
           tedarikciId: c.supplierId || undefined,
           direction: c.direction,
           status: c.status as any,
           kasaMi: c.status === 'KASADA',
           aciklama: c.description || undefined,
+          imageUrl: c.imageDataUrl || undefined,
+          imageDataUrl: c.imageDataUrl || undefined,
         }));
         setCheques(mappedCheques);
       } catch (error) {
@@ -738,11 +743,26 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   const chequesInCash = cheques.filter((c) => c.status === 'KASADA');
   const chequesTotal = chequesInCash.reduce((sum, c) => sum + c.tutar, 0);
 
+  // TARİH / SAAT SÖZLEŞMESİ - 5.3: Gün içi işlemler başlığı
+  // Asla new Date() kullanmaz
+  // Liste hangi transactionDate'i gösteriyorsa başlık da onu gösterir
+  // "Sabah yanlış, sonra düzeliyor" bug'ı bu şekilde kapanır
   const today = todayIso();
   const todaysTransactions = useMemo(
     () => dailyTransactions.filter((tx) => tx.isoDate === today),
     [dailyTransactions, today]
   );
+  
+  // Get the transactionDate from the first transaction (if any) or use today
+  // This ensures the title always matches what's shown in the list
+  const displayedDate = useMemo(() => {
+    if (todaysTransactions.length > 0) {
+      // Use the transactionDate from the first transaction
+      return todaysTransactions[0].isoDate;
+    }
+    // If no transactions, use today (but this should match the filter)
+    return today;
+  }, [todaysTransactions, today]);
 
   // FINANCIAL INVARIANT: Compute context-aware running balance for today's transactions
   // This ensures credit card transactions don't affect KASA balance
@@ -826,16 +846,18 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       }
       
       // Prepare payload
+      // Note: BANKA_KASA_TRANSFER_IN requires source='KASA' and bankDelta=0
+      // Backend will create two transactions (OUT for bank, IN for cash) automatically
       const payload = {
         isoDate: values.islemTarihiIso,
         documentNo,
-        type: isBankToCash ? 'BANKA_KASA_TRANSFER' : 'NAKIT_TAHSILAT',
-        source: 'KASA', // BANKA_KASA_TRANSFER must have source=KASA to affect cash balance
+        type: isBankToCash ? 'BANKA_KASA_TRANSFER_IN' : 'NAKIT_TAHSILAT',
+        source: 'KASA', // BANKA_KASA_TRANSFER_IN must have source=KASA to affect cash balance
         counterparty,
         description: values.aciklama || null,
         incoming: values.tutar,
         outgoing: 0,
-        bankDelta: isBankToCash ? -values.tutar : 0,
+        bankDelta: 0, // CRITICAL: KASA source requires bankDelta=0 (backend creates transfer transactions separately)
         bankId: isBankToCash && values.bankaId ? values.bankaId.trim() : null,
       };
       
@@ -897,18 +919,19 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       const isCashToBank = values.kaynak === 'KASA_TRANSFER_BANKAYA';
       
       // Prepare payload
-      // Note: KASA_BANKA_TRANSFER requires source='KASA' (backend normalizes storedSource to KASA)
+      // Note: KASA_BANKA_TRANSFER_OUT requires source='KASA' and bankDelta=0
+      // Backend will create two transactions (OUT for cash, IN for bank) automatically
       // NAKIT_ODEME requires source='KASA' for cash out
       const payload = {
       isoDate: values.islemTarihiIso,
       documentNo,
-        type: isCashToBank ? 'KASA_BANKA_TRANSFER' : 'NAKIT_ODEME',
+        type: isCashToBank ? 'KASA_BANKA_TRANSFER_OUT' : 'NAKIT_ODEME',
         source: 'KASA', // Both types require source=KASA for cash balance calculation
       counterparty,
         description: values.aciklama || null,
       incoming: 0,
         outgoing: values.tutar, // Fix: Set outgoing = amount for cash out
-        bankDelta: isCashToBank ? values.tutar : 0,
+        bankDelta: 0, // CRITICAL: KASA source requires bankDelta=0 (backend creates transfer transactions separately)
         bankId: isCashToBank && values.bankaId ? values.bankaId : null,
       };
       
@@ -1165,9 +1188,9 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       source: 'BANKA',
       counterparty,
             description: values.aciklama || null,
-            incoming: values.tutar, // Backend will normalize to 0 for BANK CASH IN
-      outgoing: 0,
-            bankDelta: values.tutar, // Backend will use this for bankDelta
+            incoming: 0, // CRITICAL: BANKA source requires incoming=0 (only bankDelta is used)
+      outgoing: 0, // CRITICAL: BANKA source requires outgoing=0 (only bankDelta is used)
+            bankDelta: values.tutar, // BANKA source: only bankDelta is used for bank balance
             displayIncoming: values.tutar, // BUG 2 FIX: Show amount in UI
             displayOutgoing: null,
             bankId: normalizedBankId,
@@ -1259,9 +1282,9 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         source: 'BANKA',
         counterparty: values.muhatap || 'Virman',
           description: values.aciklama || null,
-        incoming: 0,
-          outgoing: values.tutar, // Fix Bug 8: Set outgoing = amount for bank cash out
-        bankDelta: -values.tutar,
+        incoming: 0, // CRITICAL: BANKA source requires incoming=0 (only bankDelta is used)
+          outgoing: 0, // CRITICAL: BANKA source requires outgoing=0 (only bankDelta is used)
+        bankDelta: -values.tutar, // BANKA source: only bankDelta is used for bank balance
           bankId: normalizedBankId,
         });
 
@@ -1636,15 +1659,15 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         isoDate: values.islemTarihiIso,
         documentNo,
           // BUG 2 FIX: Bank cash out - type: NAKIT_ODEME (or CEK_ODENMESI for cheques), source: BANKA
-          // Backend normalizes: incoming=0, outgoing=amount, bankDelta=-amount
+          // CRITICAL: BANKA source requires incoming=0, outgoing=0 (only bankDelta is used)
           // But we need displayOutgoing=amount for UI display
           type: values.islemTuru === 'CEK_ODEME' ? 'CEK_ODENMESI' : 'NAKIT_ODEME',
         source: 'BANKA',
           counterparty: counterparty || 'Diğer',
           description: description || null,
-        incoming: 0,
-          outgoing: tutar, // BUG 3 FIX: Must be > 0 for bank cash out
-          bankDelta: -tutar, // Backend will normalize correctly
+        incoming: 0, // CRITICAL: BANKA source requires incoming=0 (only bankDelta is used)
+          outgoing: 0, // CRITICAL: BANKA source requires outgoing=0 (only bankDelta is used)
+          bankDelta: -tutar, // BANKA source: only bankDelta is used for bank balance
           displayIncoming: null, // BUG 2 FIX: No incoming for bank cash out
           displayOutgoing: tutar, // BUG 2 FIX: Show amount in UI
           bankId: normalizedBankId,
@@ -1818,7 +1841,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         balanceAfter: brutResponse.balanceAfter,
         bankId: brutResponse.bankId || undefined,
         bankDelta: brutResponse.bankDelta || undefined,
-        displayIncoming: brutResponse.displayIncoming || undefined,
+        displayIncoming: brutResponse.displayIncoming ?? undefined, // POS_TAHSILAT_BRUT: brut tutar
+        displayOutgoing: brutResponse.displayOutgoing ?? undefined, // Should be null for POS_TAHSILAT_BRUT
         createdAtIso: brutResponse.createdAt,
         createdBy: brutResponse.createdBy,
       };
@@ -1844,7 +1868,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         bankDelta: komisyonResponse.bankDelta !== undefined && komisyonResponse.bankDelta !== null 
           ? komisyonResponse.bankDelta 
           : undefined,
-        displayOutgoing: komisyonResponse.displayOutgoing || undefined,
+        displayIncoming: komisyonResponse.displayIncoming ?? undefined, // Should be null for POS_KOMISYONU
+        displayOutgoing: komisyonResponse.displayOutgoing ?? undefined, // POS_KOMISYONU: komisyon tutarı
         createdAtIso: komisyonResponse.createdAt,
         createdBy: komisyonResponse.createdBy,
       };
@@ -1929,7 +1954,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         outgoing: 0,
         balanceAfter: 0, // Will be recalculated
         bankDelta: 0,
-        displayOutgoing: response.transaction.displayOutgoing || undefined,
+        displayOutgoing: response.transaction.displayOutgoing ?? undefined,
         createdAtIso: new Date().toISOString(),
         createdBy: currentUser.email,
       };
@@ -2045,7 +2070,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         outgoing: 0,
         balanceAfter: 0, // Will be recalculated
         bankDelta: 0,
-        displayOutgoing: response.transaction.displayOutgoing || undefined,
+        displayOutgoing: response.transaction.displayOutgoing ?? undefined,
         createdAtIso: new Date().toISOString(),
         createdBy: currentUser.email,
       };
@@ -2108,21 +2133,26 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       // Backend returns ChequeListResponse with items array
       const response = await apiGet<{ items: any[]; totalCount: number }>('/api/cheques');
       // Map backend DTO to frontend Cheque format
+      // CRITICAL: drawerName ve payeeName backend'den korunmalı (tedarikçi adı ile karıştırılmamalı)
       const mappedCheques: Cheque[] = response.items.map((c) => ({
         id: c.id,
         cekNo: c.cekNo,
         tutar: c.amount,
         vadeTarihi: c.maturityDate,
-        bankaId: c.bankId || undefined,
-        bankaAdi: '', // Will be populated from banks prop if needed
-        duzenleyen: c.customer?.name || c.supplier?.name || '',
-        lehtar: c.supplier?.name || c.customer?.name || `Çek ${c.cekNo}`,
+        bankaId: c.depositBankId || undefined, // Çeki tahsile verdiğimiz banka (bizim bankamız)
+        bankaAdi: c.depositBank?.name || undefined, // Backend'den gelen deposit bank adı
+        issuerBankName: c.issuerBankName || undefined, // Çeki düzenleyen banka adı
+        // CRITICAL: drawerName ve payeeName backend'den korunmalı (tedarikçi/müşteri adı ile değiştirilmemeli)
+        duzenleyen: c.drawerName || c.customer?.name || c.supplier?.name || '', // Backend'den gelen drawerName
+        lehtar: c.payeeName || c.supplier?.name || c.customer?.name || `Çek ${c.cekNo}`, // Backend'den gelen payeeName
         musteriId: c.customerId || undefined,
         tedarikciId: c.supplierId || undefined,
         direction: c.direction,
         status: c.status as any,
         kasaMi: c.status === 'KASADA',
         aciklama: c.description || undefined,
+        imageUrl: c.imageDataUrl || undefined,
+        imageDataUrl: c.imageDataUrl || undefined,
       }));
       setCheques(mappedCheques);
       // Also refresh summary to update upcoming payments (single source of truth)
@@ -2327,7 +2357,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
               <img
                 src="https://esca-food.com/image/cache/catalog/esca%20food%20logosu%20tek_-700x800.png"
                 alt="Esca Food"
-                className="h-[120px] object-contain"
+                className="h-[168px] object-contain"
               />
             </div>
             <div className="flex items-center space-x-3 text-sm text-slate-600">
@@ -2441,7 +2471,15 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
 
             <div className="card p-4">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-lg font-semibold">Gün İçi İşlemler</div>
+                <div className="text-lg font-semibold">
+                  Gün İçi İşlemler
+                  {/* TARİH / SAAT SÖZLEŞMESİ - 5.3: Liste hangi transactionDate'i gösteriyorsa başlık da onu gösterir */}
+                  {displayedDate && (
+                    <span className="ml-2 text-sm font-normal text-slate-500">
+                      ({isoToDisplay(displayedDate)} - {getWeekdayTr(displayedDate)})
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-3">
                   {/* FINANCIAL INVARIANT: Balance context selector */}
                   <div className="flex items-center gap-2">
@@ -2532,19 +2570,16 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                         <td className="py-2 px-2">{tx.counterparty}</td>
                         <td className="py-2 px-2">{tx.description}</td>
                         <td className="py-2 px-2 text-right text-emerald-600">
-                          {tx.displayIncoming !== undefined && tx.displayIncoming > 0
-                            ? formatTl(tx.displayIncoming)
-                            : tx.incoming && tx.incoming > 0
-                            ? formatTl(tx.incoming)
-                            : '-'}
+                          {(() => {
+                            const { giris } = resolveDisplayAmounts(tx);
+                            return giris !== null ? formatTl(giris) : '-';
+                          })()}
                         </td>
                         <td className="py-2 px-2 text-right text-rose-600">
-                          {/* BUG 2 FIX: Only show displayOutgoing if it's > 0, otherwise show outgoing if > 0, otherwise show '-' */}
-                          {tx.displayOutgoing !== undefined && tx.displayOutgoing !== null && tx.displayOutgoing > 0
-                            ? formatTl(tx.displayOutgoing) 
-                            : (tx.outgoing !== undefined && tx.outgoing !== null && tx.outgoing > 0) 
-                              ? formatTl(tx.outgoing) 
-                              : '-'}
+                          {(() => {
+                            const { cikis } = resolveDisplayAmounts(tx);
+                            return cikis !== null ? formatTl(cikis) : '-';
+                          })()}
                         </td>
                         <td className="py-2 px-2 text-right font-semibold">
                           {/* FINANCIAL INVARIANT: Use context-aware balance, not tx.balanceAfter */}
@@ -2575,7 +2610,6 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         {activeView === 'ISLEM_LOGU' && (
           <div className="p-4">
             <IslemLoguReport
-              transactions={dailyTransactions}
               banks={banks}
               currentUserEmail={currentUser.email}
               onBackToDashboard={handleBackToDashboard}

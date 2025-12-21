@@ -10,8 +10,10 @@ datasource db {
 enum DailyTransactionType {
   NAKIT_TAHSILAT
   NAKIT_ODEME
-  KASA_BANKA_TRANSFER
-  BANKA_KASA_TRANSFER
+  KASA_BANKA_TRANSFER_OUT
+  KASA_BANKA_TRANSFER_IN
+  BANKA_KASA_TRANSFER_OUT
+  BANKA_KASA_TRANSFER_IN
   BANKA_HAVALE_GIRIS
   BANKA_HAVALE_CIKIS
   POS_TAHSILAT_BRUT
@@ -157,7 +159,7 @@ model Bank {
 
   transactions Transaction[]
   creditCards  CreditCard[]
-  cheques      Cheque[]
+  depositCheques Cheque[] @relation("ChequeDepositBank") // Çeki tahsile verdiğimiz bankalar
   loans        Loan[]
   posTerminals PosTerminal[]
 
@@ -232,9 +234,13 @@ model Cheque {
   direction            ChequeDirection
   customerId           String?
   supplierId           String?
-  bankId               String?
+  issuerBankName       String          // Çeki düzenleyen banka adı (çekin üstündeki banka) - zorunlu
+  depositBankId        String?         // Çeki bankaya tahsile verdiğimiz banka (bizim bankamız) - nullable
+  drawerName           String          // Düzenleyen (zorunlu)
+  payeeName            String          // Lehtar (zorunlu, default: "Esca Food A.Ş.")
   description          String?
   attachmentId         String?
+  imageDataUrl         String?         // MVP: Base64 data URL for cheque image (temporary until Attachment is used)
   // Payment tracking fields (for ODENDI status)
   paidAt               DateTime?
   paidBankId           String?
@@ -246,7 +252,7 @@ model Cheque {
   deletedAt            DateTime?
   deletedBy            String?
 
-  bank         Bank?         @relation(fields: [bankId], references: [id])
+  depositBank  Bank?         @relation("ChequeDepositBank", fields: [depositBankId], references: [id]) // Bizim bankamız (tahsile verilen)
   customer     Customer?     @relation(fields: [customerId], references: [id])
   supplier     Supplier?     @relation(fields: [supplierId], references: [id])
   attachment   Attachment?   @relation(fields: [attachmentId], references: [id])
@@ -326,12 +332,13 @@ model Attachment {
 
 model Transaction {
   id                String                 @id @default(uuid())
-  isoDate           String
+  isoDate           String                 // TARİH / SAAT SÖZLEŞMESİ - 5.1: transactionDate (kullanıcının seçtiği tarih, timezone'suz YYYY-MM-DD, raporlar bunu kullanır)
   documentNo        String?
   type              DailyTransactionType
   source            DailyTransactionSource
   counterparty      String?
-  description       String?
+  description       String?                // Otomatik + kullanıcı tarafından düzenlenebilir
+  category          String?                // Kategori (vergi, maaş, sgk, fatura vs.) - UI'da Açıklama sütununda görünür
   incoming          Decimal                @default(0) @db.Decimal(18, 2)
   outgoing          Decimal                @default(0) @db.Decimal(18, 2)
   bankDelta         Decimal                @default(0) @db.Decimal(18, 2)
@@ -346,8 +353,10 @@ model Transaction {
   supplierId        String?
   attachmentId      String?
   loanInstallmentId String?
-  createdAt         DateTime               @default(now())
-  createdBy         String
+  transferGroupId   String?                // Links related transfer transactions (BANKA_KASA_TRANSFER pairs)
+  createdAt         DateTime               @default(now()) // TARİH / SAAT SÖZLEŞMESİ - 5.1: Sistem zamanı (UTC), audit amaçlı
+  createdBy         String                 // KULLANICI / AUTH / AUDIT - 7.1: createdByUserId (User.id)
+  createdByEmail    String                 // KULLANICI / AUTH / AUDIT - 7.1: createdByEmail (denormalized for performance, UI'da email gösterilir)
   updatedAt         DateTime?
   updatedBy         String?
   deletedAt         DateTime?
@@ -368,7 +377,26 @@ model Transaction {
 
   creditCardOperations CreditCardOperation[]
 
+  @@index([transferGroupId])
   @@map("transactions")
+}
+
+// İŞLEM LOGU (AUDIT LOG) - 8: Tüm değişikliklerin loglanması
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorEmail  String   // KULLANICI / AUTH / AUDIT - 7.1: UI'da gösterilecek
+  action      String   // CREATE / UPDATE / DELETE / IMPORT
+  entityType  String   // TRANSACTION / BANK / CUSTOMER / SUPPLIER / POS_TERMINAL / CREDIT_CARD / LOAN / CHEQUE
+  entityId    String?  // İlgili entity'nin ID'si (opsiyonel)
+  summary     String   // İnsan okunur özet
+  diff        Json?    // before/after JSON (opsiyonel)
+  createdAt   DateTime @default(now())
+
+  @@index([actorEmail])
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
 
 model Loan {

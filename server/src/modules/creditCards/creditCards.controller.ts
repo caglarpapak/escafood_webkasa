@@ -6,7 +6,7 @@ import {
   CreateExpenseDto,
   CreatePaymentDto,
 } from './creditCards.types';
-import { getUserId } from '../../config/auth';
+import { getUserId, getUserInfo } from '../../config/auth';
 import { bulkSaveCreditCardSchema } from './creditCards.validation';
 
 const creditCardsService = new CreditCardsService();
@@ -86,10 +86,11 @@ export async function deleteCreditCard(req: Request, res: Response): Promise<voi
 
 export async function createExpense(req: Request, res: Response): Promise<void> {
   const data = req.body as CreateExpenseDto;
-  const createdBy = getUserId(req);
+  // KULLANICI / AUTH / AUDIT - 7.1 & 7.2: Transaction kaydında gerçek kullanıcı resolve edilmek zorunda
+  const { userId, userEmail } = await getUserInfo(req);
 
   try {
-    const result = await creditCardsService.createExpense(data, createdBy);
+    const result = await creditCardsService.createExpense(data, userId, userEmail);
     res.status(201).json(result);
   } catch (error: any) {
     if (error.message === 'Credit card not found') {
@@ -102,10 +103,11 @@ export async function createExpense(req: Request, res: Response): Promise<void> 
 
 export async function createPayment(req: Request, res: Response): Promise<void> {
   const data = req.body as CreatePaymentDto;
-  const createdBy = getUserId(req);
+  // KULLANICI / AUTH / AUDIT - 7.1 & 7.2: Transaction kaydında gerçek kullanıcı resolve edilmek zorunda
+  const { userId, userEmail } = await getUserInfo(req);
 
   try {
-    const result = await creditCardsService.createPayment(data, createdBy);
+    const result = await creditCardsService.createPayment(data, userId, userEmail);
     res.status(201).json(result);
   } catch (error: any) {
     if (error.message === 'Credit card not found') {

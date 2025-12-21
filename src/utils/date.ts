@@ -1,7 +1,14 @@
 const weekdays = ['pazar', 'pazartesi', 'salı', 'çarşamba', 'perşembe', 'cuma', 'cumartesi'];
 
 export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  // TIMEZONE FIX: Use local date instead of UTC to avoid timezone issues
+  // When it's 01:40 in Turkey (UTC+3), UTC is still 22:40 of previous day
+  // This causes the system to show yesterday's date
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 export function isoToDisplay(iso: string): string {
@@ -18,14 +25,24 @@ export function displayToIso(display: string): string {
 }
 
 export function getWeekdayTr(iso: string): string {
-  const date = new Date(iso);
+  // TIMEZONE FIX: Parse ISO date as local date to avoid timezone issues
+  // "2025-12-22" should be treated as local date, not UTC
+  const [y, m, d] = iso.split('-').map(Number);
+  if (isNaN(y) || isNaN(m) || isNaN(d)) return '';
+  const date = new Date(y, m - 1, d); // Month is 0-indexed
   const day = date.getDay();
   return weekdays[day] || '';
 }
 
 export function diffInDays(fromIso: string, toIso: string): number {
-  const from = new Date(fromIso);
-  const to = new Date(toIso);
+  // TIMEZONE FIX: Parse ISO dates as local dates to avoid timezone issues
+  const parseLocalDate = (iso: string): Date => {
+    const [y, m, d] = iso.split('-').map(Number);
+    if (isNaN(y) || isNaN(m) || isNaN(d)) return new Date(iso); // Fallback to default parsing
+    return new Date(y, m - 1, d); // Month is 0-indexed
+  };
+  const from = parseLocalDate(fromIso);
+  const to = parseLocalDate(toIso);
   const diff = to.getTime() - from.getTime();
   return Math.round(diff / (1000 * 60 * 60 * 24));
 }

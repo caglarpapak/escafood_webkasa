@@ -89,7 +89,7 @@ export function CekSenetReport({ cheques, customers, suppliers, banks, onBackToD
       .filter((c) => {
         if (!search.trim()) return true;
         const term = search.toLowerCase();
-        const combined = `${c.cekNo} ${c.bankaAdi || ''} ${c.duzenleyen || ''} ${c.lehtar || ''} ${c.aciklama || ''}`.toLowerCase();
+        const combined = `${c.cekNo} ${c.issuerBankName || ''} ${c.bankaAdi || ''} ${c.duzenleyen || ''} ${c.lehtar || ''} ${c.aciklama || ''}`.toLowerCase();
         return combined.includes(term);
       })
       .sort((a, b) => a.vadeTarihi.localeCompare(b.vadeTarihi));
@@ -322,7 +322,8 @@ export function CekSenetReport({ cheques, customers, suppliers, banks, onBackToD
                 <th className="px-2 py-2 text-left">Tür</th>
                 <th className="px-2 py-2 text-left">Vade Tarihi</th>
                 <th className="px-2 py-2 text-left">Gün Farkı</th>
-                <th className="px-2 py-2 text-left">Banka</th>
+                <th className="px-2 py-2 text-left">Çek Bankası</th>
+                <th className="px-2 py-2 text-left">Tahsile Verilen Banka</th>
                 <th className="px-2 py-2 text-left">Düzenleyen</th>
                 <th className="px-2 py-2 text-left">Lehtar</th>
                 <th className="px-2 py-2 text-left">Müşteri / Tedarikçi</th>
@@ -336,21 +337,39 @@ export function CekSenetReport({ cheques, customers, suppliers, banks, onBackToD
             <tbody>
               {filteredCheques.length === 0 && (
                 <tr>
-                  <td colSpan={13} className="text-center text-slate-500 py-4">
+                  <td colSpan={14} className="text-center text-slate-500 py-4">
                     Kayıt bulunamadı.
                   </td>
                 </tr>
               )}
               {filteredCheques.map((c) => {
                 const daysLeft = diffInDays(today, c.vadeTarihi);
-                const bankName = c.bankaAdi || banks.find((b) => b.id === c.bankaId)?.bankaAdi || '-';
+                // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.1 & 9.3: Banka gösterimi
+                // "Banka" kolonu = issuerBankName (çeki düzenleyen banka adı)
+                // "Tahsile Verilen Banka" = depositBankName (çeki tahsile verdiğimiz banka)
+                const issuerBankName = c.issuerBankName || '-'; // Çeki düzenleyen banka (çekin üstündeki banka)
+                const depositBankName = c.bankaAdi || banks.find((b) => b.id === c.bankaId)?.bankaAdi || '-'; // Çeki tahsile verdiğimiz banka (bizim bankamız)
+                
+                // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.1 & 9.2: Müşteri/Tedarikçi sütunu
+                // Kasaya giren çek: BOŞ (musteriId = null, tedarikciId = null)
+                // Kasadan tedarikçiye verilen çek: Tedarikçi adı görünür
                 const musteri = c.musteriId ? customers.find((m) => m.id === c.musteriId) : undefined;
                 const tedarikci = c.tedarikciId ? suppliers.find((s) => s.id === c.tedarikciId) : undefined;
-                const muhatap = musteri
-                  ? `${musteri.kod} - ${musteri.ad}`
-                  : tedarikci
-                  ? `${tedarikci.kod} - ${tedarikci.ad}`
-                  : '-';
+                const muhatap = (() => {
+                  // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.1: Kasaya giren çek - Müşteri/Tedarikçi sütunu: BOŞ
+                  if (c.direction === 'ALACAK' && c.status === 'KASADA' && !c.musteriId && !c.tedarikciId) {
+                    return '-';
+                  }
+                  // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.2: Kasadan tedarikçiye verilen çek - Tedarikçi adı görünür
+                  if (tedarikci) {
+                    return `${tedarikci.kod} - ${tedarikci.ad}`;
+                  }
+                  if (musteri) {
+                    return `${musteri.kod} - ${musteri.ad}`;
+                  }
+                  return '-';
+                })();
+                
                 const konum = c.kasaMi
                   ? 'Kasada'
                   : c.status === 'BANKADA_TAHSILDE'
@@ -381,11 +400,14 @@ export function CekSenetReport({ cheques, customers, suppliers, banks, onBackToD
                     >
                       {daysLeft}
                     </td>
-                    <td className="px-2 py-2 truncate" title={bankName}>
-                      {bankName}
+                    <td className="px-2 py-2 truncate" title={issuerBankName}>
+                      {issuerBankName}
                     </td>
-                    <td className="px-2 py-2">{c.duzenleyen}</td>
-                    <td className="px-2 py-2">{c.lehtar}</td>
+                    <td className="px-2 py-2 truncate" title={depositBankName}>
+                      {depositBankName}
+                    </td>
+                    <td className="px-2 py-2">{c.duzenleyen || '-'}</td>
+                    <td className="px-2 py-2">{c.lehtar || '-'}</td>
                     <td className="px-2 py-2 truncate" title={muhatap}>
                       {muhatap}
                     </td>
@@ -393,18 +415,22 @@ export function CekSenetReport({ cheques, customers, suppliers, banks, onBackToD
                     <td className="px-2 py-2">{statusLabels[c.status]}</td>
                     <td className="px-2 py-2">{konum}</td>
                     <td className="px-2 py-2">
-                      {c.imageDataUrl ? (
+                      {/* ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.5: Çek görseli zorunlu, yüklüyse UI'da asla 'Yok' yazamaz */}
+                      {/* Görsel kontrolü: imageDataUrl veya imageUrl varsa göster */}
+                      {c.imageDataUrl || c.imageUrl ? (
                         <button
                           className="text-xs text-blue-600 underline"
                           onClick={() => {
-                            setPreviewImageUrl(c.imageDataUrl || null);
+                            const imageUrl = c.imageDataUrl || c.imageUrl || null;
+                            setPreviewImageUrl(imageUrl);
                             setPreviewTitle(c.imageFileName || `Çek No: ${c.cekNo}`);
                           }}
                         >
                           Göster
                         </button>
                       ) : (
-                        <span className="text-xs text-gray-400">Yok</span>
+                        // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.5: Görsel yoksa göster (ama zorunlu olduğu için bu durum olmamalı)
+                        <span className="text-xs text-rose-600">Görsel yüklenmemiş</span>
                       )}
                     </td>
                     <td className="px-2 py-2 truncate" title={c.aciklama || ''}>

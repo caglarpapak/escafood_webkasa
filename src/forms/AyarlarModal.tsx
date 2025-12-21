@@ -110,7 +110,7 @@ const AyarlarModal: React.FC<Props> = ({
     
     // Modal opened: if parent state has data, sync it to local state
     // This ensures that after modal close/reopen, we use the latest parent state (which was updated in onClose)
-    if (banks.length > 0 || creditCards.length > 0 || loans.length > 0) {
+    if (banks.length > 0 || creditCards.length > 0 || loans.length > 0 || customers.length > 0 || suppliers.length > 0 || posTerminals.length > 0) {
       console.log('[BUG-1 DEBUG] AyarlarModal - Syncing local state from parent state on modal open');
       setLocalBanks(banks);
       setLocalCreditCards(creditCards);
@@ -306,10 +306,6 @@ const AyarlarModal: React.FC<Props> = ({
         setLocalCustomers(finalCustomers);
         setLocalSuppliers(finalSuppliers);
         setLocalPosTerminals(finalPosTerminals);
-        // Update parent state
-        setCustomers(finalCustomers);
-        setSuppliers(finalSuppliers);
-        setPosTerminals(finalPosTerminals);
         setBankFlags(flagsFromStorage);
         setGlobalForm(globalSettings);
 
@@ -317,9 +313,9 @@ const AyarlarModal: React.FC<Props> = ({
         setBanks(mappedBanks);
         setCreditCards(mappedCards);
         setLoans(backendLoans);
-        setCustomers(customers);
-        setSuppliers(suppliers);
-        setPosTerminals(posTerminals);
+        setCustomers(finalCustomers);
+        setSuppliers(finalSuppliers);
+        setPosTerminals(finalPosTerminals);
       } catch (error) {
         console.error('Error fetching settings data:', error);
         alert('Ayarlar yüklenirken bir hata oluştu.');
@@ -943,7 +939,8 @@ const AyarlarModal: React.FC<Props> = ({
         };
       });
       
-      // Update parent state
+      // Update both local and parent state (CRITICAL: must update both)
+      setLocalCustomers(mappedCustomers);
       setCustomers(mappedCustomers);
       
       // Update localStorage cache (for offline/performance, not as source of truth)

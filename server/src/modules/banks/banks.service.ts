@@ -32,9 +32,10 @@ export class BanksService {
         where: {
           deletedAt: null,
           bankId: { not: null },
-          // Legacy opening tx’leri dışarıda bırak
+          // Legacy opening tx'leri dışarıda bırak
           OR: [{ description: { not: OPENING_TX_DESC } }, { description: null }],
         },
+        orderBy: { bankId: 'asc' },
       }),
     ]);
 
@@ -58,7 +59,8 @@ export class BanksService {
   }
 
   async createBank(payload: CreateBankDTO, createdBy: string): Promise<BankWithBalance> {
-    const openingBalance = payload.openingBalance ?? 0;
+    // Frontend sends 'initialBalance', but backend uses 'openingBalance' in schema
+    const openingBalance = (payload as any).openingBalance ?? (payload as any).initialBalance ?? 0;
 
     const created = await prisma.bank.create({
       data: {
@@ -88,6 +90,32 @@ export class BanksService {
     return {
       ...(created as any),
       openingBalance: toNumber((created as any).openingBalance) || openingBalance,
+      currentBalance: openingBalance + transactionDelta,
+    };
+  }
+
+  async getBankById(id: string): Promise<BankWithBalance | null> {
+    const bank = await prisma.bank.findUnique({ where: { id } });
+    if (!bank || (bank as any).deletedAt) {
+      return null;
+    }
+
+    const deltaGroups = await prisma.transaction.groupBy({
+      by: ['bankId'],
+      _sum: { bankDelta: true },
+      where: {
+        deletedAt: null,
+        bankId: bank.id,
+        OR: [{ description: { not: OPENING_TX_DESC } }, { description: null }],
+      },
+    });
+
+    const transactionDelta = deltaGroups.length > 0 ? toNumber(deltaGroups[0]._sum?.bankDelta) : 0;
+    const openingBalance = toNumber((bank as any).openingBalance);
+
+    return {
+      ...(bank as any),
+      openingBalance,
       currentBalance: openingBalance + transactionDelta,
     };
   }

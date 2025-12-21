@@ -94,6 +94,7 @@ export const createTransactionSchema = z
       z.string().max(200).nullable().optional()
     ),
     description: optionalStringCreate,
+    category: optionalStringCreate, // TÜR / AÇIKLAMA / KATEGORİ AYRIMI - 4.2: Kategori (vergi, maaş, sgk, fatura vs.)
     incoming: z.number().nonnegative().default(0),
     outgoing: z.number().nonnegative().default(0),
     bankDelta: z.number().default(0),
@@ -166,6 +167,39 @@ export const createTransactionSchema = z
     }
   )
   .superRefine((data, ctx) => {
+    // TRANSACTION KANONİK SÖZLEŞMESİ - 1.1: Alanların anlamı (KESİN)
+    // KASA source: incoming/outgoing kullanılır, bankDelta ASLA kullanılmaz
+    // BANKA source: SADECE bankDelta kullanılır, incoming/outgoing ASLA kullanılmaz
+    
+    if (data.source === 'KASA') {
+      // KASA source: bankDelta must be 0
+      if (data.bankDelta !== undefined && data.bankDelta !== 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['bankDelta'],
+          message: 'KASA source\'lu işlemlerde bankDelta kullanılamaz (bankDelta = 0 olmalıdır).',
+        });
+      }
+    }
+    
+    if (data.source === 'BANKA') {
+      // BANKA source: incoming and outgoing must be 0
+      if (data.incoming !== undefined && data.incoming !== 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['incoming'],
+          message: 'BANKA source\'lu işlemlerde incoming kullanılamaz (incoming = 0 olmalıdır).',
+        });
+      }
+      if (data.outgoing !== undefined && data.outgoing !== 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['outgoing'],
+          message: 'BANKA source\'lu işlemlerde outgoing kullanılamaz (outgoing = 0 olmalıdır).',
+        });
+      }
+    }
+
     // Fix Bug 4: Bank-related transactions require bankId
     // This includes:
     // 1. Specific bank transaction types (BANKA_HAVALE_GIRIS, etc.)
@@ -173,8 +207,10 @@ export const createTransactionSchema = z
     const bankRequiredTypes: DailyTransactionType[] = [
       'BANKA_HAVALE_GIRIS',
       'BANKA_HAVALE_CIKIS',
-      'BANKA_KASA_TRANSFER',
-      'KASA_BANKA_TRANSFER',
+      'BANKA_KASA_TRANSFER_OUT',
+      'BANKA_KASA_TRANSFER_IN',
+      'KASA_BANKA_TRANSFER_OUT',
+      'KASA_BANKA_TRANSFER_IN',
       'POS_TAHSILAT_BRUT',
       'POS_KOMISYONU', // BUG B FIX: POS_KOMISYONU requires bankId (same bank as POS_TAHSILAT_BRUT)
       'KREDI_KARTI_EKSTRE_ODEME',
@@ -214,8 +250,10 @@ export const createTransactionSchema = z
     const bankRequiredTypes: DailyTransactionType[] = [
       'BANKA_HAVALE_GIRIS',
       'BANKA_HAVALE_CIKIS',
-      'BANKA_KASA_TRANSFER',
-      'KASA_BANKA_TRANSFER',
+      'BANKA_KASA_TRANSFER_OUT',
+      'BANKA_KASA_TRANSFER_IN',
+      'KASA_BANKA_TRANSFER_OUT',
+      'KASA_BANKA_TRANSFER_IN',
       'POS_TAHSILAT_BRUT',
       'POS_KOMISYONU', // BUG B FIX: POS_KOMISYONU requires bankId (same bank as POS_TAHSILAT_BRUT)
       'KREDI_KARTI_EKSTRE_ODEME',
@@ -241,6 +279,7 @@ export const updateTransactionSchema = z.object({
   source: z.nativeEnum(DailyTransactionSource).optional(),
   counterparty: z.string().max(200).nullable().optional(),
   description: z.string().max(500).nullable().optional(),
+  category: z.string().max(200).nullable().optional(),
   incoming: z.number().nonnegative().optional(),
   outgoing: z.number().nonnegative().optional(),
   bankDelta: z.number().optional(),
@@ -282,11 +321,12 @@ export const transactionListQuerySchema = z.object({
   bankId: optionalUuidString,
   creditCardId: optionalUuidString,
   createdBy: optionalUuidString,
+  createdByEmail: optionalString, // Filter by user email (for UI filtering)
   search: optionalString,
   sortKey: z.enum(['isoDate', 'documentNo', 'type', 'counterparty', 'incoming', 'outgoing', 'balanceAfter']).optional(),
   sortDir: z.enum(['asc', 'desc']).optional(),
   page: z.coerce.number().int().positive().optional(),
-  pageSize: z.coerce.number().int().positive().max(100).optional(),
+  pageSize: z.coerce.number().int().positive().max(500).optional(), // Increased max for report use case
 });
 
 // Alias for backward compatibility

@@ -335,7 +335,8 @@ export class LoansService {
     installmentId: string,
     isoDate: string,
     description: string | null,
-    createdBy: string
+    createdBy: string,
+    createdByEmail: string
   ): Promise<{ ok: boolean; paidInstallmentId: string; loan: LoanDto; transaction: any }> {
     const installment = await prisma.loanInstallment.findUnique({
       where: { id: installmentId },
@@ -412,6 +413,7 @@ export class LoansService {
           supplierId: null,
           attachmentId: null,
           createdBy,
+          createdByEmail: createdByEmail || '',
         },
       });
 
@@ -470,7 +472,8 @@ export class LoansService {
     isoDate: string | null,
     amount: number | null,
     description: string | null,
-    createdBy: string
+    createdBy: string,
+    createdByEmail: string
   ): Promise<{ ok: boolean; paidLoanId: string; paidInstallmentId: string; loan: LoanDto; transaction: any }> {
     // Verify loan exists and is active
     const loan = await prisma.loan.findUnique({
@@ -544,6 +547,7 @@ export class LoansService {
           supplierId: null,
           attachmentId: null,
           createdBy,
+          createdByEmail: createdByEmail || '',
         },
       });
 

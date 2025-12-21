@@ -43,29 +43,7 @@ type ReportSortKey = 'vadeTarihi' | 'tutar';
 
 type QuickStatusFilter = ChequeStatus[];
 
-const bankNameOptions = [
-  'Akbank T.A.Ş.',
-  'Burgan Bank A.Ş.',
-  'DenizBank A.Ş.',
-  'Fibabanka A.Ş.',
-  'Garanti BBVA A.Ş.',
-  'HSBC Bank A.Ş.',
-  'ING Bank A.Ş.',
-  'İstanbul Takas ve Saklama Bankası A.Ş.',
-  'İller Bankası A.Ş.',
-  'QNB Finansbank A.Ş.',
-  'Şekerbank T.A.Ş.',
-  'T.C. Ziraat Bankası A.Ş.',
-  'TEB – Türk Ekonomi Bankası A.Ş.',
-  'Türkiye Halk Bankası A.Ş.',
-  'Türkiye İş Bankası A.Ş.',
-  'Türkiye Kalkınma ve Yatırım Bankası A.Ş.',
-  'Türkiye Sınai Kalkınma Bankası A.Ş. (TSKB)',
-  'Türk Eximbank',
-  'VakıfBank T.A.O.',
-  'Yapı ve Kredi Bankası A.Ş.',
-  'Diğer Banka',
-];
+// Removed bankNameOptions - now using banks prop (BankMaster[]) for dropdown
 
 const reasonLabels: Record<CikisReason, string> = {
   TAHSIL_ELDEN: 'Tahsil elden',
@@ -92,8 +70,9 @@ export default function CekIslemleriModal({
 
   const [girisCustomerId, setGirisCustomerId] = useState('');
   const [girisDuzenleyen, setGirisDuzenleyen] = useState('');
-  const [girisLehtar, setGirisLehtar] = useState('Esca Food AŞ');
-  const [girisBankaAdi, setGirisBankaAdi] = useState('');
+  const [girisLehtar, setGirisLehtar] = useState('Esca Food A.Ş.');
+  const [girisIssuerBankName, setGirisIssuerBankName] = useState(''); // Çeki düzenleyen banka adı (dropdown veya serbest metin, zorunlu)
+  const [girisIssuerBankOther, setGirisIssuerBankOther] = useState(''); // "Diğer Banka" seçildiğinde serbest metin
   const [girisCekNo, setGirisCekNo] = useState('');
   const [girisTutar, setGirisTutar] = useState<number | null>(null);
   const [girisVadeTarihi, setGirisVadeTarihi] = useState(todayIso());
@@ -139,8 +118,9 @@ export default function CekIslemleriModal({
       setDirty(false);
       setGirisCustomerId('');
       setGirisDuzenleyen('');
-      setGirisLehtar('Esca Food AŞ');
-      setGirisBankaAdi('');
+      setGirisLehtar('Esca Food A.Ş.');
+      setGirisIssuerBankName('');
+      setGirisIssuerBankOther('');
       setGirisCekNo('');
       setGirisTutar(null);
       setGirisVadeTarihi(todayIso());
@@ -289,16 +269,20 @@ export default function CekIslemleriModal({
   };
 
   const handleSaveGiris = async () => {
-    // customerId is optional - cheque can work with just free-text counterparty name
-    if (!girisCekNo || !girisBankaAdi || !girisTutar || girisTutar <= 0 || !girisVadeTarihi) return;
+    // Determine issuerBankName: if "Diğer Banka" selected, use girisIssuerBankOther, otherwise use girisIssuerBankName
+    const issuerBankName = girisIssuerBankName === 'DIGER' ? girisIssuerBankOther : girisIssuerBankName;
+    
+    // Validation: drawerName, issuerBankName are required
+    if (!girisCekNo || !girisDuzenleyen || !issuerBankName || !girisTutar || girisTutar <= 0 || !girisVadeTarihi) {
+      alert('Lütfen tüm zorunlu alanları doldurun (Çek No, Düzenleyen, Çek Bankası, Tutar, Vade Tarihi).');
+      return;
+    }
     if (!girisChequeDataUrl) {
       alert('Çek görseli eklenmeden bu işlem kaydedilemez.');
       return;
     }
 
     try {
-      // TODO: Upload attachment first to get attachmentId
-      // For now, creating cheque without attachment
       const response = await apiPost<{
         id: string;
         cekNo: string;
@@ -309,43 +293,66 @@ export default function CekIslemleriModal({
         direction: 'ALACAK';
         customerId: string | null;
         supplierId: string | null;
-        bankId: string | null;
+        issuerBankName: string;
+        depositBankId: string | null;
+        drawerName: string;
+        payeeName: string;
         description: string | null;
+        imageDataUrl: string | null;
+        depositBank?: {
+          id: string;
+          name: string;
+        } | null;
       }>('/api/cheques', {
         cekNo: girisCekNo,
         amount: girisTutar,
         entryDate: todayIso(), // Using today as entry date
         maturityDate: girisVadeTarihi,
         direction: 'ALACAK',
-        customerId: girisCustomerId && girisCustomerId.trim() ? girisCustomerId : null,
+        drawerName: girisDuzenleyen, // Zorunlu: Düzenleyen
+        payeeName: girisLehtar || 'Esca Food A.Ş.', // Lehtar (default if not set)
+        issuerBankName: issuerBankName, // Zorunlu: Çeki düzenleyen banka adı
+        depositBankId: null, // Kasaya girişte null (sadece tahsile ver işleminde set edilir)
+        customerId: null, // Always null for kasaya giren çek
         supplierId: null,
-        bankId: null, // Frontend doesn't have bankId for giris, only bankaAdi
         description: girisAciklama || null,
-        attachmentId: null, // TODO: Upload and get attachmentId
+        imageDataUrl: girisChequeDataUrl, // MVP: Base64 data URL
       });
 
       // Map backend response to frontend format
       const newCheque: Cheque = {
         id: response.id,
         cekNo: response.cekNo,
-        bankaAdi: girisBankaAdi,
+        bankaId: response.depositBankId || undefined, // Tahsile verilen banka (bizim bankamız)
+        bankaAdi: response.depositBank?.name || undefined, // Tahsile verilen banka adı
+        issuerBankName: response.issuerBankName, // Çeki düzenleyen banka adı
         tutar: response.amount,
         vadeTarihi: response.maturityDate,
-        duzenleyen: girisDuzenleyen || customers.find((c) => c.id === girisCustomerId)?.ad || '',
-        lehtar: girisLehtar || 'Esca Food AŞ',
+        duzenleyen: response.drawerName,
+        lehtar: response.payeeName,
         musteriId: response.customerId || undefined,
         direction: 'ALACAK', // Customer cheque
         status: mapToFrontendStatus(response.status as any, 'ALACAK'),
         kasaMi: response.status === 'KASADA',
         aciklama: response.description || undefined,
-        imageUrl: girisChequeDataUrl || undefined,
-        imageDataUrl: girisChequeDataUrl || undefined,
+        imageUrl: response.imageDataUrl || undefined,
+        imageDataUrl: response.imageDataUrl || undefined,
         imageFileName: girisChequeFile?.name,
       };
 
       onSaved({ updatedCheques: [...cheques, newCheque] });
     } catch (error: any) {
-      alert(`Hata: ${error.message || 'Çek kaydedilemedi'}`);
+      console.error('Çek girişi kaydedilemedi:', error);
+      const errorMessage = error.message || error.response?.data?.message || error.response?.data?.error || 'Çek kaydedilemedi';
+      const details = error.response?.data?.details;
+      const stack = error.response?.data?.stack;
+      if (details) {
+        console.error('Validation details:', details);
+      }
+      if (stack) {
+        console.error('Server stack trace:', stack);
+      }
+      alert(`Hata: ${errorMessage}${details ? '\n\nDetaylar: ' + JSON.stringify(details, null, 2) : ''}`);
     }
   };
 
@@ -358,26 +365,26 @@ export default function CekIslemleriModal({
     try {
       // Determine backend status based on reason
       let backendStatus: 'BANKADA_TAHSILDE' | 'TAHSIL_EDILDI' | 'ODEMEDE' | 'KARSILIKSIZ';
-      let bankId: string | null = null;
+      let depositBankId: string | null = null;
 
       switch (cikisReason) {
         case 'TAHSIL_ELDEN':
           backendStatus = 'TAHSIL_EDILDI';
-          bankId = null; // Collected into cash
+          depositBankId = null; // Collected into cash
           break;
         case 'TAHSIL_BANKADAN':
           backendStatus = 'TAHSIL_EDILDI';
-          bankId = cikisTahsilBankasiId;
+          depositBankId = cikisTahsilBankasiId; // Çeki tahsile verdiğimiz banka (bizim bankamız)
           break;
         case 'TEDARIKCI_VERILDI':
           // BUG 7 FIX: Customer cheque (ALACAK) given to supplier - update status to ODEMEDE
           // For BORC cheques, this would also be ODEMEDE, but supplierId should be set
           backendStatus = 'ODEMEDE';
-          bankId = null;
+          depositBankId = null;
           break;
         case 'YAZILDI':
           backendStatus = 'KARSILIKSIZ';
-          bankId = null;
+          depositBankId = null;
           break;
         case 'IADE':
         case 'DIGER':
@@ -399,25 +406,52 @@ export default function CekIslemleriModal({
           direction: 'ALACAK' | 'BORC';
           customerId: string | null;
           supplierId: string | null;
-          bankId: string | null;
+          issuerBankName: string;
+          depositBankId: string | null;
+          drawerName: string;
+          payeeName: string;
           description: string | null;
+          imageDataUrl: string | null;
+          depositBank?: {
+            id: string;
+            name: string;
+          } | null;
         };
         transactionId: string | null;
       }>(`/api/cheques/${selectedCheque.id}/status`, {
         newStatus: backendStatus,
         isoDate: cikisIslemTarihi,
-        bankId: bankId,
-        description: cikisAciklama || `Çek No: ${selectedCheque.cekNo}`,
+        depositBankId: depositBankId, // Çeki tahsile verdiğimiz banka (bizim bankamız)
+        // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.4: Açıklama güncelleme kuralı
+        // Yeni işlemde açıklama girildiyse → overwrite
+        // Boş bırakıldıysa → eski açıklama korunur (backend'de null gönderilir)
+        description: cikisAciklama && cikisAciklama.trim() ? cikisAciklama.trim() : null,
+        // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.2: Kasadan tedarikçiye verilen çek
+        // Müşteri/Tedarikçi sütunu: ilgili tedarikçi adı
+        supplierId: cikisReason === 'TEDARIKCI_VERILDI' ? cikisSupplierId : undefined,
       });
 
       // Map backend response to frontend format
+      // CRITICAL: drawerName ve payeeName backend'den korunmalı, tedarikçi adı ile karıştırılmamalı
       const updatedCheque: Cheque = {
         ...selectedCheque,
         direction: (response.cheque as any).direction || selectedCheque.direction, // Preserve direction
         status: mapToFrontendStatus(response.cheque.status as any, response.cheque.direction),
         kasaMi: response.cheque.status === 'KASADA',
-        bankaId: response.cheque.bankId || undefined,
+        bankaId: response.cheque.depositBankId || undefined, // Çeki tahsile verdiğimiz banka (bizim bankamız)
+        bankaAdi: response.cheque.depositBank?.name || selectedCheque.bankaAdi, // Backend'den gelen deposit bank adı
+        issuerBankName: response.cheque.issuerBankName || selectedCheque.issuerBankName, // Çeki düzenleyen banka adı
+        // CRITICAL: drawerName ve payeeName backend'den korunmalı (tedarikçi adı ile değiştirilmemeli)
+        duzenleyen: response.cheque.drawerName || selectedCheque.duzenleyen, // Backend'den gelen drawerName
+        lehtar: response.cheque.payeeName || selectedCheque.lehtar, // Backend'den gelen payeeName
+        // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.3: Bankaya tahsile verilen çek
+        // Tahsile Verilen Banka adı görünür (depositBankId set edilir)
+        // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.4: Açıklama güncelleme kuralı
         aciklama: response.cheque.description || selectedCheque.aciklama,
+        // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.2: Kasadan tedarikçiye verilen çek
+        // Müşteri/Tedarikçi sütunu: ilgili tedarikçi adı
+        tedarikciId: response.cheque.supplierId || undefined,
+        imageDataUrl: response.cheque.imageDataUrl || selectedCheque.imageDataUrl,
       };
 
       const updatedCheques = cheques.map((c) => (c.id === selectedCheque.id ? updatedCheque : c));
@@ -555,22 +589,53 @@ export default function CekIslemleriModal({
                   }}
                 />
               </FormRow>
-              <FormRow label="Banka" required>
+              <FormRow label="Çek Bankası" required>
                 <select
-                  className="form-input w-full truncate"
-                  value={girisBankaAdi}
+                  className="form-input"
+                  value={girisIssuerBankName}
                   onChange={(e) => {
-                    setGirisBankaAdi(e.target.value);
+                    setGirisIssuerBankName(e.target.value);
+                    if (e.target.value !== 'DIGER') {
+                      setGirisIssuerBankOther(''); // Clear other bank name if not "Diğer Banka"
+                    }
                     setDirty(true);
                   }}
                 >
                   <option value="">Seçiniz</option>
-                  {bankNameOptions.map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
-                  ))}
+                  <option value="Akbank">Akbank</option>
+                  <option value="Albaraka Türk">Albaraka Türk</option>
+                  <option value="Burgan Bank">Burgan Bank</option>
+                  <option value="DenizBank">DenizBank</option>
+                  <option value="Fibabanka">Fibabanka</option>
+                  <option value="Garanti BBVA">Garanti BBVA</option>
+                  <option value="Halkbank">Halkbank</option>
+                  <option value="HSBC">HSBC</option>
+                  <option value="ING Bank">ING Bank</option>
+                  <option value="İller Bankası">İller Bankası</option>
+                  <option value="İş Bankası">İş Bankası</option>
+                  <option value="Kuveyt Türk">Kuveyt Türk</option>
+                  <option value="QNB Finansbank">QNB Finansbank</option>
+                  <option value="Takasbank">Takasbank</option>
+                  <option value="TEB (Türk Ekonomi Bankası)">TEB (Türk Ekonomi Bankası)</option>
+                  <option value="TSKB">TSKB</option>
+                  <option value="Türk Eximbank">Türk Eximbank</option>
+                  <option value="VakıfBank">VakıfBank</option>
+                  <option value="Yapı Kredi">Yapı Kredi</option>
+                  <option value="Ziraat Bankası">Ziraat Bankası</option>
+                  <option value="DIGER">Diğer Banka</option>
                 </select>
+                {girisIssuerBankName === 'DIGER' && (
+                  <input
+                    className="form-input mt-2"
+                    value={girisIssuerBankOther}
+                    onChange={(e) => {
+                      setGirisIssuerBankOther(e.target.value);
+                      setDirty(true);
+                    }}
+                    placeholder="Banka adını giriniz"
+                  />
+                )}
+                <p className="text-xs text-slate-500 mt-1">Çeki düzenleyen banka adı (çekin üstündeki banka)</p>
               </FormRow>
               <FormRow label="Çek No" required>
                 <input
@@ -683,7 +748,7 @@ export default function CekIslemleriModal({
                 </select>
               </FormRow>
               {cikisReason === 'TAHSIL_BANKADAN' && (
-                <FormRow label="Tahsil Bankası" required>
+                <FormRow label="Bizim Bankamız (Tahsile Verilen)" required>
                   <select
                     className="form-input w-full truncate"
                     value={cikisTahsilBankasiId}
@@ -699,6 +764,7 @@ export default function CekIslemleriModal({
                       </option>
                     ))}
                   </select>
+                  <p className="text-xs text-slate-500 mt-1">Çeki tahsile verdiğimiz banka (bizim bankamız)</p>
                 </FormRow>
               )}
               {cikisReason === 'TEDARIKCI_VERILDI' && (
@@ -926,28 +992,88 @@ export default function CekIslemleriModal({
                     </th>
                     <th className="py-2 px-2 text-left">Durum</th>
                     <th className="py-2 px-2 text-left">Konum</th>
+                    {/* ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.1 & 9.2: Müşteri/Tedarikçi sütunu */}
+                    <th className="py-2 px-2 text-left">Müşteri / Tedarikçi</th>
+                    <th className="py-2 px-2 text-left">Görsel</th>
                   </tr>
                 </thead>
                 <tbody>
                   {reportRows.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="py-3 text-center text-slate-500">
+                      <td colSpan={11} className="py-3 text-center text-slate-500">
                         Kayıt yok.
                       </td>
                     </tr>
                   )}
-                  {reportRows.map((c) => (
-                    <tr key={c.id} className="border-t">
-                      <td className="py-2 px-2">{c.cekNo}</td>
-                      <td className="py-2 px-2">{c.bankaAdi || '-'}</td>
-                      <td className="py-2 px-2">{c.duzenleyen}</td>
-                      <td className="py-2 px-2">{c.lehtar}</td>
-                      <td className="py-2 px-2">{isoToDisplay(c.vadeTarihi)}</td>
-                      <td className="py-2 px-2">{formatTl(c.tutar)}</td>
-                      <td className="py-2 px-2">{statusLabel(c.status)}</td>
-                      <td className="py-2 px-2">{getKonum(c)}</td>
-                    </tr>
-                  ))}
+                  {reportRows.map((c) => {
+                    // Çek Bankası: issuerBankName (çeki düzenleyen banka adı)
+                    const cekBankasi = c.issuerBankName || '-';
+                    
+                    // Tahsile Verilen Banka: depositBankId varsa bank adını göster (bizim bankamız)
+                    const tahsileVerilenBanka = c.bankaId
+                      ? (c.bankaAdi || banks.find((b) => b.id === c.bankaId)?.bankaAdi || '-')
+                      : '-';
+                    
+                    // Düzenleyen ve Lehtar: DB'den gelen değerleri göster
+                    const duzenleyen = c.duzenleyen || '-';
+                    const lehtar = c.lehtar || '-';
+                    
+                    // Görsel durumu: imageDataUrl veya imageUrl varsa "Görsel var"
+                    const hasImage = !!(c.imageDataUrl || c.imageUrl);
+                    
+                    // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.1 & 9.2: Müşteri/Tedarikçi sütunu
+                    // Kasaya giren çek: BOŞ (musteriId = null, tedarikciId = null)
+                    // Kasadan tedarikçiye verilen çek: Tedarikçi adı görünür
+                    const musteri = c.musteriId ? customers.find((m) => m.id === c.musteriId) : undefined;
+                    const tedarikci = c.tedarikciId ? suppliers.find((s) => s.id === c.tedarikciId) : undefined;
+                    const muhatap = (() => {
+                      // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.1: Kasaya giren çek - Müşteri/Tedarikçi sütunu: BOŞ
+                      if (c.direction === 'ALACAK' && c.status === 'KASADA' && !c.musteriId && !c.tedarikciId) {
+                        return '-';
+                      }
+                      // ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.2: Kasadan tedarikçiye verilen çek - Tedarikçi adı görünür
+                      if (tedarikci) {
+                        return `${tedarikci.kod} - ${tedarikci.ad}`;
+                      }
+                      if (musteri) {
+                        return `${musteri.kod} - ${musteri.ad}`;
+                      }
+                      return '-';
+                    })();
+                    
+                    return (
+                      <tr key={c.id} className="border-t">
+                        <td className="py-2 px-2">{c.cekNo}</td>
+                        <td className="py-2 px-2">{cekBankasi}</td>
+                        <td className="py-2 px-2">{tahsileVerilenBanka}</td>
+                        <td className="py-2 px-2">{duzenleyen}</td>
+                        <td className="py-2 px-2">{lehtar}</td>
+                        <td className="py-2 px-2">{isoToDisplay(c.vadeTarihi)}</td>
+                        <td className="py-2 px-2">{formatTl(c.tutar)}</td>
+                        <td className="py-2 px-2">{statusLabel(c.status)}</td>
+                        <td className="py-2 px-2">{getKonum(c)}</td>
+                        {/* ÇEK / SENET KANONİK SÖZLEŞMESİ - 9.1 & 9.2: Müşteri/Tedarikçi sütunu */}
+                        <td className="py-2 px-2">{muhatap}</td>
+                        <td className="py-2 px-2">
+                          {hasImage ? (
+                            <button
+                              className="text-indigo-600 hover:text-indigo-700 text-sm"
+                              onClick={() => {
+                                const imageUrl = c.imageDataUrl || c.imageUrl;
+                                if (imageUrl) {
+                                  window.open(imageUrl, '_blank');
+                                }
+                              }}
+                            >
+                              Görüntüle
+                            </button>
+                          ) : (
+                            <span className="text-slate-400 text-sm">Görsel yüklenmemiş</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

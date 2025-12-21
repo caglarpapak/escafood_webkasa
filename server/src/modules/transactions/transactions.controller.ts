@@ -7,7 +7,8 @@ import {
   transactionQuerySchema,
   updateTransactionSchema,
 } from './transactions.validation';
-import { getUserId } from '../../config/auth';
+import { getUserId, getUserInfo } from '../../config/auth';
+import { logAudit } from '../auditLog/auditLog.helper';
 
 const service = new TransactionsService();
 
@@ -55,11 +56,24 @@ export class TransactionsController {
       const payload = createTransactionSchema.parse(req.body);
       console.log('Validated payload:', JSON.stringify(payload, null, 2));
       
-      const createdBy = getUserId(req);
-      console.log('Created by user ID:', createdBy);
+      // KULLANICI / AUTH / AUDIT - 7.1 & 7.2: Transaction kaydında gerçek kullanıcı resolve edilmek zorunda
+      const { userId, userEmail } = await getUserInfo(req);
+      console.log('Created by user ID:', userId);
+      console.log('Created by user email:', userEmail);
       
-      const transaction = await service.createTransaction(payload, createdBy);
+      const transaction = await service.createTransaction(payload, userId, userEmail);
       console.log('Transaction created successfully, returning 201');
+      
+      // İŞLEM LOGU (AUDIT LOG) - 8.1: Tüm + / - transactionlar loglanır
+      await logAudit(
+        userEmail,
+        'CREATE',
+        'TRANSACTION',
+        `Transaction oluşturuldu: ${transaction.type} - ${transaction.documentNo || 'Belge No yok'}`,
+        transaction.id,
+        { transaction: { type: transaction.type, documentNo: transaction.documentNo, amount: transaction.incoming || transaction.outgoing || transaction.bankDelta } }
+      );
+      
       res.status(201).json(transaction);
     } catch (error) {
       console.error('=== CREATE TRANSACTION ERROR ===');
@@ -86,8 +100,22 @@ export class TransactionsController {
   async update(req: Request, res: Response) {
     try {
       const payload = updateTransactionSchema.parse(req.body);
-      const updatedBy = getUserId(req);
+      // İŞLEM LOGU (AUDIT LOG) - 8.1: Tüm + / - transactionlar loglanır
+      const { userId: updatedBy, userEmail } = await getUserInfo(req);
+      const existing = await service.getTransactionById(req.params.id);
       const transaction = await service.updateTransaction(req.params.id, payload, updatedBy);
+      
+      if (existing) {
+        await logAudit(
+          userEmail,
+          'UPDATE',
+          'TRANSACTION',
+          `Transaction güncellendi: ${transaction.type} - ${transaction.documentNo || 'Belge No yok'}`,
+          transaction.id,
+          { before: { type: existing.type, documentNo: existing.documentNo, incoming: existing.incoming, outgoing: existing.outgoing, bankDelta: existing.bankDelta }, after: { type: transaction.type, documentNo: transaction.documentNo, incoming: transaction.incoming, outgoing: transaction.outgoing, bankDelta: transaction.bankDelta } }
+        );
+      }
+      
       res.json(transaction);
     } catch (error) {
       handleError(res, error);
@@ -108,8 +136,22 @@ export class TransactionsController {
 
   async remove(req: Request, res: Response) {
     try {
-      const deletedBy = getUserId(req);
+      // İŞLEM LOGU (AUDIT LOG) - 8.1: Tüm + / - transactionlar loglanır
+      const { userId: deletedBy, userEmail } = await getUserInfo(req);
+      const existing = await service.getTransactionById(req.params.id);
       await service.deleteTransaction(req.params.id, deletedBy);
+      
+      if (existing) {
+        await logAudit(
+          userEmail,
+          'DELETE',
+          'TRANSACTION',
+          `Transaction silindi: ${existing.type} - ${existing.documentNo || 'Belge No yok'}`,
+          existing.id,
+          { transaction: { type: existing.type, documentNo: existing.documentNo } }
+        );
+      }
+      
       res.status(204).send();
     } catch (error) {
       handleError(res, error);

@@ -83,16 +83,33 @@ export class SuppliersService {
         );
         results.push(created);
       } else {
-        // Update existing supplier
-        const updated = await this.updateSupplier(
-          item.id,
-          {
-            name: `${item.kod} - ${item.ad}`, // Convert to "kod - ad" format
-            isActive: item.aktifMi,
-          },
-          userId
-        );
-        results.push(updated);
+        // Check if supplier exists before trying to update
+        const existing = await prisma.supplier.findUnique({ where: { id: item.id } });
+        if (!existing || existing.deletedAt) {
+          // Supplier doesn't exist or is deleted - treat as new supplier
+          const created = await this.createSupplier(
+            {
+              name: `${item.kod} - ${item.ad}`, // Convert to "kod - ad" format
+              phone: null,
+              email: null,
+              taxNo: null,
+              address: null,
+            },
+            userId
+          );
+          results.push(created);
+        } else {
+          // Update existing supplier
+          const updated = await this.updateSupplier(
+            item.id,
+            {
+              name: `${item.kod} - ${item.ad}`, // Convert to "kod - ad" format
+              isActive: item.aktifMi,
+            },
+            userId
+          );
+          results.push(updated);
+        }
       }
     }
     return results;

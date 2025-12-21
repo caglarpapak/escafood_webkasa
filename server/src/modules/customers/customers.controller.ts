@@ -2,7 +2,8 @@ import { Request, Response } from 'express';
 import { ZodError } from 'zod';
 import { CustomersService } from './customers.service';
 import { customerIdParamSchema, bulkSaveCustomerSchema, createCustomerSchema, deleteCustomerSchema, updateCustomerSchema } from './customers.validation';
-import { getUserId } from '../../config/auth';
+import { getUserId, getUserInfo } from '../../config/auth';
+import { logAudit, createDiff } from '../auditLog/auditLog.helper';
 
 const service = new CustomersService();
 
@@ -31,8 +32,19 @@ export class CustomersController {
   async create(req: Request, res: Response) {
     try {
       const payload = createCustomerSchema.parse(req.body);
-      const createdBy = getUserId(req);
+      // İŞLEM LOGU (AUDIT LOG) - 8.1: Tekil müşteri ekleme loglanır
+      const { userId: createdBy, userEmail } = await getUserInfo(req);
       const customer = await service.createCustomer(payload, createdBy);
+      
+      await logAudit(
+        userEmail,
+        'CREATE',
+        'CUSTOMER',
+        `Müşteri oluşturuldu: ${customer.name}`,
+        customer.id,
+        { customer: { name: customer.name, phone: customer.phone, email: customer.email } }
+      );
+      
       res.status(201).json(customer);
     } catch (error) {
       handleError(res, error);
@@ -66,8 +78,19 @@ export class CustomersController {
   async bulkSave(req: Request, res: Response) {
     try {
       const rawPayload = bulkSaveCustomerSchema.parse(req.body);
-      const userId = getUserId(req);
+      // İŞLEM LOGU (AUDIT LOG) - 8.1: CSV importlar loglanır
+      const { userId, userEmail } = await getUserInfo(req);
       const customers = await service.bulkSaveCustomers(rawPayload, userId);
+      
+      await logAudit(
+        userEmail,
+        'IMPORT',
+        'CUSTOMER',
+        `${customers.length} müşteri CSV'den içe aktarıldı`,
+        null,
+        { count: customers.length, customers: customers.map(c => ({ id: c.id, name: c.name })) }
+      );
+      
       res.json(customers);
     } catch (error) {
       handleError(res, error);

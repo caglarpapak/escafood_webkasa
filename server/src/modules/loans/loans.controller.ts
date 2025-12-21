@@ -10,7 +10,7 @@ import {
   payInstallmentSchema,
   payNextInstallmentSchema,
 } from './loans.validation';
-import { getUserId } from '../../config/auth';
+import { getUserId, getUserInfo } from '../../config/auth';
 
 const service = new LoansService();
 
@@ -98,13 +98,14 @@ export class LoansController {
     try {
       const params = loanInstallmentIdParamSchema.parse(req.params);
       const payload = payInstallmentSchema.parse(req.body);
-      const createdBy = getUserId(req);
+      const { userId: createdBy, userEmail: createdByEmail } = await getUserInfo(req);
       const result = await service.payInstallment(
         params.loanId,
         params.installmentId,
         payload.isoDate,
         payload.description || null,
-        createdBy
+        createdBy,
+        createdByEmail
       );
       res.json(result);
     } catch (error) {
@@ -116,14 +117,15 @@ export class LoansController {
     try {
       const params = loanIdParamSchema.parse(req.params);
       const payload = payNextInstallmentSchema.parse(req.body);
-      const createdBy = getUserId(req);
+      const { userId: createdBy, userEmail: createdByEmail } = await getUserInfo(req);
       const result = await service.payNextInstallment(
         params.id,
         payload.bankId,
         payload.isoDate || null,
         payload.amount || null,
         payload.note || null,
-        createdBy
+        createdBy,
+        createdByEmail
       );
       res.json(result);
     } catch (error) {

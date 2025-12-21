@@ -152,6 +152,7 @@ export class ReportsService {
         displayOutgoing: tx.displayOutgoing ? Number(tx.displayOutgoing) : null, // BUG 2 FIX: Include for bank cash out
         bankId: tx.bankId,
         bankName: tx.bank?.name || null,
+        bankDelta: tx.bankDelta !== null && tx.bankDelta !== undefined ? Number(tx.bankDelta) : null, // For bank transfer tracking
         creditCardId: tx.creditCardId,
         creditCardName: tx.creditCard?.name || null,
       })),
@@ -354,113 +355,68 @@ export class ReportsService {
 
   /**
    * Get cashflow contribution for a transaction (giris)
+   * 
+   * UI GÖSTERİM KURALI (GÜN İÇİ / KASA DEFTERİ) - 2.1 Tutar resolver (TEK KURAL)
+   * if (tx.source === 'BANKA') {
+   *   giris = tx.bankDelta > 0 ? tx.bankDelta : null
+   * } else {
+   *   giris = tx.incoming > 0 ? tx.incoming : null
+   * }
    */
   private getNakitAkisGiris(tx: any): number {
-    switch (tx.type) {
-      case 'NAKIT_TAHSILAT':
-        // If source is BANKA, use bankDelta (bank cash in)
-        if (tx.source === 'BANKA' && Number(tx.bankDelta) > 0) {
-          return Number(tx.bankDelta);
-        }
-        // If source is KASA, use incoming (cash in)
-        return Number(tx.incoming);
-
-      case 'BANKA_HAVALE_GIRIS':
-        if (Number(tx.bankDelta) > 0) {
-          return Number(tx.bankDelta);
-        }
-        return 0;
-
-      case 'POS_TAHSILAT_BRUT':
-        return Number(tx.displayIncoming) || 0;
-
-      case 'BANKA_KASA_TRANSFER':
-        // Internal movements do NOT affect net cashflow in the report
-        return 0;
-
-      case 'KASA_BANKA_TRANSFER':
-        // Internal movements do NOT affect net cashflow in the report
-        return 0;
-
-      case 'CEK_TAHSIL_BANKA':
-        if (tx.source === 'KASA' && Number(tx.incoming) > 0) {
-          return Number(tx.incoming);
-        }
-        if (tx.source === 'BANKA' && Number(tx.bankDelta) > 0) {
-          return Number(tx.bankDelta);
-        }
-        return 0;
-
-      case 'DEVIR_BAKIYE':
-      case 'DUZELTME':
-        // Optional: exclude or handle separately
-        return 0;
-
-      default:
-        return 0;
+    // UI GÖSTERİM KURALI: Source-based resolver
+    if (tx.source === 'BANKA') {
+      // BANKA source: SADECE bankDelta kullanılır
+      const bankDelta = Number(tx.bankDelta) || 0;
+      return bankDelta > 0 ? bankDelta : 0;
+    } else if (tx.source === 'POS') {
+      // POS source: displayIncoming kullanılır (POS_TAHSILAT_BRUT için)
+      // POS transaction'larında incoming=0 olduğu için displayIncoming kullanılmalı
+      return Number(tx.displayIncoming) || 0;
+    } else if (tx.source === 'KREDI_KARTI') {
+      // KREDI_KARTI source: giriş yok (kredi kartı harcamaları giriş değildir)
+      return 0;
+    } else {
+      // KASA source: incoming/outgoing kullanılır
+      // Legacy: Kredi kartı ekstre ödeme gibi legacy outgoing kullanan satırlar için
+      // incoming kullanılır (source !== 'BANKA' && source !== 'POS' && source !== 'KREDI_KARTI' olduğu için buraya düşer)
+      return Number(tx.incoming) || 0;
     }
   }
 
   /**
    * Get cashflow contribution for a transaction (cikis)
-   * Uses explicit per-type rules from the spec
+   * 
+   * UI GÖSTERİM KURALI (GÜN İÇİ / KASA DEFTERİ) - 2.1 Tutar resolver (TEK KURAL)
+   * if (tx.source === 'BANKA') {
+   *   cikis = tx.bankDelta < 0 ? abs(tx.bankDelta) : null
+   * } else {
+   *   cikis = tx.outgoing > 0 ? tx.outgoing : null
+   * }
+   * 
+   * BANKA satırında (-) tutar mutlaka görünür (cikis olarak)
+   * Kredi kartı ekstre ödeme gibi legacy outgoing kullanan satırlar bozulmayacak
    */
   private getNakitAkisCikis(tx: any): number {
-    switch (tx.type) {
-      case 'NAKIT_ODEME':
-        // If source is BANKA, use bankDelta (bank cash out)
-        if (tx.source === 'BANKA' && Number(tx.bankDelta) < 0) {
-          return Math.abs(Number(tx.bankDelta));
-        }
-        // If source is KASA, use outgoing (cash out)
-        return Number(tx.outgoing);
-
-      case 'BANKA_HAVALE_CIKIS':
-        if (Number(tx.bankDelta) < 0) {
-          return Math.abs(Number(tx.bankDelta));
-        }
-        return 0;
-
-      case 'POS_KOMISYONU':
-        // Always use displayOutgoing for commission
-        return Number(tx.displayOutgoing) || 0;
-
-      case 'KREDI_KARTI_HARCAMA':
-        return Number(tx.displayOutgoing) || 0;
-
-      case 'KREDI_KARTI_EKSTRE_ODEME':
-        if (Number(tx.bankDelta) < 0) {
-          return Math.abs(Number(tx.bankDelta));
-        }
-        if (Number(tx.outgoing) > 0) {
-          return Number(tx.outgoing);
-        }
-        return 0;
-
-      case 'KASA_BANKA_TRANSFER':
-        // Internal movements do NOT affect net cashflow in the report
-        return 0;
-
-      case 'BANKA_KASA_TRANSFER':
-        // Internal movements do NOT affect net cashflow in the report
-        return 0;
-
-      case 'CEK_ODENMESI':
-        if (tx.source === 'KASA' && Number(tx.outgoing) > 0) {
-          return Number(tx.outgoing);
-        }
-        if (tx.source === 'BANKA' && Number(tx.bankDelta) < 0) {
-          return Math.abs(Number(tx.bankDelta));
-        }
-        return 0;
-
-      case 'DEVIR_BAKIYE':
-      case 'DUZELTME':
-        // Optional: exclude or handle separately
-        return 0;
-
-      default:
-        return 0;
+    // UI GÖSTERİM KURALI: Source-based resolver
+    if (tx.source === 'BANKA') {
+      // BANKA source: SADECE bankDelta kullanılır
+      // BANKA satırında (-) tutar mutlaka görünür (cikis olarak)
+      const bankDelta = Number(tx.bankDelta) || 0;
+      return bankDelta < 0 ? Math.abs(bankDelta) : 0;
+    } else if (tx.source === 'POS') {
+      // POS source: displayOutgoing kullanılır (POS_KOMISYONU için)
+      // POS transaction'larında outgoing=0 olduğu için displayOutgoing kullanılmalı
+      return Number(tx.displayOutgoing) || 0;
+    } else if (tx.source === 'KREDI_KARTI') {
+      // KREDI_KARTI source: displayOutgoing kullanılır (KREDI_KARTI_HARCAMA için)
+      // Kredi kartı transaction'larında outgoing=0 olduğu için displayOutgoing kullanılmalı
+      return Number(tx.displayOutgoing) || 0;
+    } else {
+      // KASA source: incoming/outgoing kullanılır
+      // Legacy: Kredi kartı ekstre ödeme gibi legacy outgoing kullanan satırlar için
+      // outgoing kullanılır (source !== 'BANKA' && source !== 'POS' && source !== 'KREDI_KARTI' olduğu için buraya düşer)
+      return Number(tx.outgoing) || 0;
     }
   }
 }

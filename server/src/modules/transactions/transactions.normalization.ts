@@ -17,11 +17,20 @@ export interface NormalizedTransactionAmounts {
  * This function ensures consistent calculation of incoming, outgoing, and bankDelta
  * for all transaction types, regardless of how the client sends the data.
  * 
+ * TRANSACTION KANONİK SÖZLEŞMESİ - 1.1: Alanların anlamı (KESİN)
+ * - "KASA" → incoming / outgoing kullanılır
+ * - "BANKA" → SADECE bankDelta kullanılır
+ * - incoming / outgoing: Sadece KASA source'lu satırlarda
+ * - bankDelta: Sadece BANKA source'lu satırlarda
+ * - incoming/outgoing bankada ASLA kullanılmaz
+ * - bankDelta kasada ASLA kullanılmaz
+ * 
  * Rules:
  * - Accept canonical fields: incoming, outgoing, bankDelta
  * - displayIncoming/displayOutgoing are UI-only and not authoritative
  * - For types requiring net calculation (e.g., POS_TAHSILAT_BRUT), compute from provided values
  * - Validate required amount fields per transaction type
+ * - Enforce canonical contract: KASA cannot have bankDelta, BANKA cannot have incoming/outgoing
  * 
  * @param data - The transaction data from client
  * @returns Normalized amounts and stored source
@@ -49,16 +58,18 @@ export function normalizeTransactionPayload(
     case 'NAKIT_TAHSILAT':
       if (source === 'KASA') {
         // CASH IN: incoming=amount, outgoing=0, bankDelta=0
+        // KASA source: incoming/outgoing kullanılır, bankDelta ASLA kullanılmaz
         incoming = providedIncoming;
         if (incoming <= 0) {
           throw createValidationError('NAKIT_TAHSILAT (KASA) requires incoming > 0');
         }
         outgoing = 0;
-        bankDelta = 0;
+        bankDelta = 0; // KASA source: bankDelta ASLA kullanılmaz
       } else if (source === 'BANKA') {
         // BANK CASH IN: incoming=0, outgoing=0, bankDelta=+amount
-        incoming = 0;
-        outgoing = 0;
+        // BANKA source: SADECE bankDelta kullanılır, incoming/outgoing ASLA kullanılmaz
+        incoming = 0; // BANKA source: incoming ASLA kullanılmaz
+        outgoing = 0; // BANKA source: outgoing ASLA kullanılmaz
         bankDelta = providedIncoming > 0 ? providedIncoming : (providedBankDelta > 0 ? providedBankDelta : 0);
         if (bankDelta <= 0) {
           throw createValidationError('NAKIT_TAHSILAT (BANKA) requires incoming or bankDelta > 0');
@@ -71,20 +82,25 @@ export function normalizeTransactionPayload(
     case 'NAKIT_ODEME':
       if (source === 'KASA') {
         // CASH OUT: incoming=0, outgoing=amount, bankDelta=0
+        // KASA source: incoming/outgoing kullanılır, bankDelta ASLA kullanılmaz
         incoming = 0;
         outgoing = providedOutgoing;
         if (outgoing <= 0) {
           throw createValidationError('NAKIT_ODEME (KASA) requires outgoing > 0');
         }
-        bankDelta = 0;
+        bankDelta = 0; // KASA source: bankDelta ASLA kullanılmaz
       } else if (source === 'BANKA') {
-        // BANK CASH OUT: incoming=0, outgoing=amount, bankDelta=-amount
-        incoming = 0;
-        outgoing = providedOutgoing;
-        if (outgoing <= 0) {
-          throw createValidationError('NAKIT_ODEME (BANKA) requires outgoing > 0');
+        // BANK CASH OUT: incoming=0, outgoing=0, bankDelta=-amount
+        // BANKA source: SADECE bankDelta kullanılır, incoming/outgoing ASLA kullanılmaz
+        // Note: This violates canonical contract - BANKA should not have outgoing
+        // But for backward compatibility, we accept outgoing and convert to bankDelta
+        incoming = 0; // BANKA source: incoming ASLA kullanılmaz
+        outgoing = 0; // BANKA source: outgoing ASLA kullanılmaz (normalized to 0)
+        const amount = providedOutgoing > 0 ? providedOutgoing : (providedBankDelta < 0 ? -providedBankDelta : 0);
+        if (amount <= 0) {
+          throw createValidationError('NAKIT_ODEME (BANKA) requires outgoing > 0 or bankDelta < 0');
         }
-        bankDelta = -outgoing; // Always negative for cash out
+        bankDelta = -amount; // BANKA source: SADECE bankDelta kullanılır
       } else {
         throw createValidationError(`NAKIT_ODEME requires source to be KASA or BANKA, got ${source}`);
       }
@@ -92,10 +108,11 @@ export function normalizeTransactionPayload(
 
     case 'POS_TAHSILAT_BRUT':
       // POS COLLECTION: incoming=0, outgoing=0, bankDelta=+netAmount
+      // BANKA source: SADECE bankDelta kullanılır, incoming/outgoing ASLA kullanılmaz
       // Net amount = gross - commission
       // Client should send bankDelta as net amount, or we compute from displayIncoming - displayOutgoing
-      incoming = 0;
-      outgoing = 0;
+      incoming = 0; // BANKA source: incoming ASLA kullanılmaz
+      outgoing = 0; // BANKA source: outgoing ASLA kullanılmaz
       if (providedBankDelta > 0) {
         bankDelta = providedBankDelta;
       } else if (displayIncoming > 0 && displayOutgoing > 0) {
@@ -111,8 +128,9 @@ export function normalizeTransactionPayload(
 
     case 'POS_KOMISYONU':
       // POS COMMISSION: incoming=0, outgoing=0, bankDelta=-commissionAmount
-      incoming = 0;
-      outgoing = 0;
+      // BANKA source: SADECE bankDelta kullanılır, incoming/outgoing ASLA kullanılmaz
+      incoming = 0; // BANKA source: incoming ASLA kullanılmaz
+      outgoing = 0; // BANKA source: outgoing ASLA kullanılmaz
       bankDelta = providedBankDelta < 0 ? providedBankDelta : (displayOutgoing > 0 ? -displayOutgoing : 0);
       if (bankDelta >= 0) {
         throw createValidationError('POS_KOMISYONU requires bankDelta < 0 or displayOutgoing > 0');
@@ -145,7 +163,8 @@ export function normalizeTransactionPayload(
       }
       break;
 
-    case 'BANKA_KASA_TRANSFER':
+    case 'BANKA_KASA_TRANSFER_OUT':
+    case 'BANKA_KASA_TRANSFER_IN':
       // BANK TO CASH TRANSFER: Money moves from bank to cash
       // incoming=amount (cash increases), outgoing=0, bankDelta=-amount (bank decreases)
       // IMPORTANT: storedSource must be KASA so it affects cash balance calculation
@@ -158,7 +177,8 @@ export function normalizeTransactionPayload(
       storedSource = 'KASA'; // Store as KASA for balance calculation
       break;
 
-    case 'KASA_BANKA_TRANSFER':
+    case 'KASA_BANKA_TRANSFER_OUT':
+    case 'KASA_BANKA_TRANSFER_IN':
       // CASH TO BANK TRANSFER: Money moves from cash to bank
       // incoming=0, outgoing=amount (cash decreases), bankDelta=+amount (bank increases)
       // IMPORTANT: storedSource must be KASA so it affects cash balance calculation
@@ -173,8 +193,9 @@ export function normalizeTransactionPayload(
 
     case 'BANKA_HAVALE_GIRIS':
       // BANK TRANSFER IN: incoming=0, outgoing=0, bankDelta=+amount
-      incoming = 0;
-      outgoing = 0;
+      // BANKA source: SADECE bankDelta kullanılır, incoming/outgoing ASLA kullanılmaz
+      incoming = 0; // BANKA source: incoming ASLA kullanılmaz
+      outgoing = 0; // BANKA source: outgoing ASLA kullanılmaz
       bankDelta = providedIncoming > 0 ? providedIncoming : (providedBankDelta > 0 ? providedBankDelta : 0);
       if (bankDelta <= 0) {
         throw createValidationError('BANKA_HAVALE_GIRIS requires incoming or bankDelta > 0');
@@ -183,8 +204,9 @@ export function normalizeTransactionPayload(
 
     case 'BANKA_HAVALE_CIKIS':
       // BANK TRANSFER OUT: incoming=0, outgoing=0, bankDelta=-amount
-      incoming = 0;
-      outgoing = 0;
+      // BANKA source: SADECE bankDelta kullanılır, incoming/outgoing ASLA kullanılmaz
+      incoming = 0; // BANKA source: incoming ASLA kullanılmaz
+      outgoing = 0; // BANKA source: outgoing ASLA kullanılmaz
       bankDelta = providedOutgoing > 0 ? -providedOutgoing : (providedBankDelta < 0 ? providedBankDelta : 0);
       if (bankDelta >= 0) {
         throw createValidationError('BANKA_HAVALE_CIKIS requires outgoing > 0 or bankDelta < 0');
