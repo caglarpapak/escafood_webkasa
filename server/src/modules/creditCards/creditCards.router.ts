@@ -15,9 +15,13 @@ import {
   createExpenseSchema,
   createPaymentSchema,
 } from './creditCards.validation';
+import { authMiddleware } from '../auth/auth.middleware';
 import { z } from 'zod';
 
 const router = Router();
+
+// All credit card routes require authentication
+router.use(authMiddleware);
 
 /**
  * Validation middleware

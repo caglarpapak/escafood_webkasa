@@ -1,57 +1,98 @@
 import { useEffect, useState } from 'react';
 import Dashboard from './Dashboard';
 import { AppUser } from './models/user';
+import { apiPost } from './utils/api';
 
-const emailOptions = [
-  { value: '', label: 'Seçiniz' },
-  { value: 'onur@esca-food.com', label: 'onur@esca-food.com' },
-  { value: 'hayrullah@esca-food.com', label: 'hayrullah@esca-food.com' },
-];
-
-const userMap: Record<string, AppUser> = {
-  'onur@esca-food.com': {
-    id: 'onur',
-    email: 'onur@esca-food.com',
-    ad: 'Onur Öztürkler',
-    aktifMi: true,
-  },
-  'hayrullah@esca-food.com': {
-    id: 'hayrullah',
-    email: 'hayrullah@esca-food.com',
-    ad: 'Hayrullah',
-    aktifMi: true,
-  },
-};
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
-  const [selectedEmail, setSelectedEmail] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem('esca-webkasa-user');
-    if (saved) {
-      const user = userMap[saved];
-      if (user) setCurrentUser(user);
+    // Check for saved token and validate it
+    const token = localStorage.getItem('esca-webkasa-token');
+    if (token) {
+      // Try to get user info from /api/auth/me
+      fetch(`${API_BASE_URL}/api/auth/me`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+        .then(res => {
+          if (res.ok) {
+            return res.json();
+          }
+          // Token invalid, remove it
+          localStorage.removeItem('esca-webkasa-token');
+          return null;
+        })
+        .then(userData => {
+          if (userData) {
+            setCurrentUser({
+              id: userData.id,
+              email: userData.email,
+              ad: userData.name,
+              aktifMi: true,
+            });
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem('esca-webkasa-token');
+        });
     }
   }, []);
 
   useEffect(() => {
-    if (rememberMe && currentUser) {
-      localStorage.setItem('esca-webkasa-user', currentUser.email);
-    } else if (!currentUser) {
-      localStorage.removeItem('esca-webkasa-user');
+    if (!currentUser) {
+      localStorage.removeItem('esca-webkasa-token');
     }
-  }, [rememberMe, currentUser]);
+  }, [currentUser]);
 
-  const handleLogin = () => {
-    const user = userMap[selectedEmail];
-    if (!user) return;
-    setCurrentUser(user);
+  const handleLogin = async () => {
+    if (!email || !password) {
+      setLoginError('E-posta ve şifre gereklidir');
+      return;
+    }
+
+    setIsLoading(true);
+    setLoginError(null);
+
+    try {
+      const response = await apiPost<{ token: string; user: { id: string; name: string; email: string } }>('/api/auth/login', {
+        email,
+        password,
+      });
+
+      // Save token
+      localStorage.setItem('esca-webkasa-token', response.token);
+
+      // Set user
+      setCurrentUser({
+        id: response.user.id,
+        email: response.user.email,
+        ad: response.user.name,
+        aktifMi: true,
+      });
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.message || error.message || 'Giriş yapılamadı';
+      setLoginError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('esca-webkasa-token');
+    setCurrentUser(null);
   };
 
   if (currentUser) {
-    return <Dashboard currentUser={currentUser} onLogout={() => setCurrentUser(null)} />;
+    return <Dashboard currentUser={currentUser} onLogout={handleLogout} />;
   }
 
   return (
@@ -64,24 +105,38 @@ export default function App() {
         />
         <div className="text-2xl font-semibold">Giriş Yap</div>
         <div className="space-y-4 text-left">
+          {loginError && (
+            <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-lg text-sm">
+              {loginError}
+            </div>
+          )}
           <div className="space-y-2">
             <label htmlFor="email">E-posta</label>
-            <select
+            <input
               id="email"
-              value={selectedEmail}
-              onChange={(e) => setSelectedEmail(e.target.value)}
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               className="w-full"
-            >
-              {emailOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+              placeholder="ornek@esca-food.com"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleLogin();
+              }}
+            />
           </div>
           <div className="space-y-2">
             <label htmlFor="password">Şifre</label>
-            <input id="password" type="password" className="w-full" placeholder="••••••" />
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full"
+              placeholder="••••••"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleLogin();
+              }}
+            />
           </div>
           <label className="inline-flex items-center space-x-2 text-sm">
             <input
@@ -95,9 +150,9 @@ export default function App() {
           <button
             className="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-60"
             onClick={handleLogin}
-            disabled={!selectedEmail}
+            disabled={!email || !password || isLoading}
           >
-            Giriş Yap
+            {isLoading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
           </button>
         </div>
       </div>

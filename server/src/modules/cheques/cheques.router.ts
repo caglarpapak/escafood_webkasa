@@ -1,8 +1,12 @@
 import { Request, Response, Router } from 'express';
 import { ChequesController } from './cheques.controller';
+import { authMiddleware } from '../auth/auth.middleware';
 
 const router = Router();
 const controller = new ChequesController();
+
+// All cheque routes require authentication
+router.use(authMiddleware);
 
 router.get('/', (req: Request, res: Response) => controller.list(req, res));
 router.get('/payable', (req: Request, res: Response) => controller.getPayableCheques(req, res));

@@ -1,8 +1,12 @@
 import { Request, Response, Router } from 'express';
 import { BanksController } from './banks.controller';
+import { authMiddleware } from '../auth/auth.middleware';
 
 const router = Router();
 const controller = new BanksController();
+
+// All bank routes require authentication
+router.use(authMiddleware);
 
 router.get('/', (req: Request, res: Response) => controller.list(req, res));
 router.post('/', (req: Request, res: Response) => controller.create(req, res));

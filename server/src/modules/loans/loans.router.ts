@@ -1,8 +1,12 @@
 import { Request, Response, Router } from 'express';
 import { LoansController } from './loans.controller';
+import { authMiddleware } from '../auth/auth.middleware';
 
 const router = Router();
 const controller = new LoansController();
+
+// All loan routes require authentication
+router.use(authMiddleware);
 
 router.get('/', (req: Request, res: Response) => controller.list(req, res));
 router.get('/:id', (req: Request, res: Response) => controller.getById(req, res));

@@ -748,6 +748,14 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
   // Liste hangi transactionDate'i gösteriyorsa başlık da onu gösterir
   // "Sabah yanlış, sonra düzeliyor" bug'ı bu şekilde kapanır
   const today = todayIso();
+
+  // State to store opening balance (balance before today) from backend
+  const [openingBalance, setOpeningBalance] = useState<number | null>(null);
+  // State to store total bank opening balance (balance before today) from backend
+  const [totalBankOpeningBalance, setTotalBankOpeningBalance] = useState<number | null>(null);
+  // State to store bank opening balances (balance before today) from backend - Map of bankId -> balance
+  const [bankOpeningBalances, setBankOpeningBalances] = useState<Map<string, number>>(new Map());
+
   const todaysTransactions = useMemo(
     () => dailyTransactions.filter((tx) => tx.isoDate === today),
     [dailyTransactions, today]
@@ -764,6 +772,138 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
     return today;
   }, [todaysTransactions, today]);
 
+  // Fetch opening balance from backend (balance before today)
+  useEffect(() => {
+    const fetchOpeningBalance = async () => {
+      try {
+        // Get the last KASA transaction before today to get the closing balance of previous day
+        // We'll get all transactions up to today, then filter to get the last one before today
+        const response = await apiGet<{ items: any[]; totalCount: number }>(
+          `/api/transactions?source=KASA&to=${today}&sortKey=isoDate&sortDir=desc&pageSize=100`
+        );
+        
+        // Filter to get transactions before today
+        const beforeToday = response.items.filter(tx => tx.isoDate < today);
+        
+        if (beforeToday.length > 0) {
+          // Get the last transaction before today (already sorted desc by isoDate)
+          const lastBeforeToday = beforeToday[0];
+          setOpeningBalance(Number(lastBeforeToday.balanceAfter) ?? 0);
+        } else {
+          // No transactions before today, opening balance is 0
+          setOpeningBalance(0);
+        }
+      } catch (error) {
+        console.error('Failed to fetch opening balance:', error);
+        setOpeningBalance(0); // Fallback to 0 on error
+      }
+    };
+    
+    const fetchTotalBankOpeningBalance = async () => {
+      try {
+        // Get all bank transactions before today to calculate total bank balance
+        // Backend API has a max pageSize of 500, so we use that
+        const response = await apiGet<{ items: any[]; totalCount: number }>(
+          `/api/transactions?to=${today}&sortKey=isoDate&sortDir=desc&pageSize=500`
+        );
+        
+        // Filter to get transactions before today that have bankDelta
+        const beforeToday = response.items.filter(
+          tx => tx.isoDate < today && tx.bankDelta !== undefined && tx.bankDelta !== null
+        );
+        
+        // Calculate bank opening balances per bank
+        const bankBalancesMap = new Map<string, number>();
+        
+        // Initialize with opening balances
+        banks.forEach(bank => {
+          if (bank.aktifMi) {
+            bankBalancesMap.set(bank.id, bank.acilisBakiyesi || 0);
+          }
+        });
+        
+        // Add bankDelta values from before today
+        beforeToday.forEach(tx => {
+          if (tx.bankId) {
+            const currentBalance = bankBalancesMap.get(tx.bankId) || 0;
+            bankBalancesMap.set(tx.bankId, currentBalance + (Number(tx.bankDelta) || 0));
+          }
+        });
+        
+        setBankOpeningBalances(bankBalancesMap);
+        
+        // Sum all bankDelta values from before today for total
+        const totalBankDelta = beforeToday.reduce((sum, tx) => sum + (Number(tx.bankDelta) || 0), 0);
+        
+        // Total bank opening balance = sum of all bank opening balances + sum of all bankDelta before today
+        const totalOpening = banks.filter(b => b.aktifMi).reduce((sum, b) => sum + (b.acilisBakiyesi || 0), 0);
+        setTotalBankOpeningBalance(totalOpening + totalBankDelta);
+      } catch (error) {
+        console.error('Failed to fetch total bank opening balance:', error);
+        // Fallback: calculate from banks only (without bankDelta)
+        const bankBalancesMap = new Map<string, number>();
+        banks.forEach(bank => {
+          if (bank.aktifMi) {
+            bankBalancesMap.set(bank.id, bank.acilisBakiyesi || 0);
+          }
+        });
+        setBankOpeningBalances(bankBalancesMap);
+        const totalOpening = banks.filter(b => b.aktifMi).reduce((sum, b) => sum + (b.acilisBakiyesi || 0), 0);
+        setTotalBankOpeningBalance(totalOpening);
+      }
+    };
+    
+    fetchOpeningBalance();
+    fetchTotalBankOpeningBalance();
+  }, [today, banks]);
+
+  // FINANCIAL INVARIANT: Calculate initial balance (carryover from previous day)
+  // This is the balance before today's transactions
+  const initialBalance = useMemo(() => {
+    if (balanceContext.type === 'KASA') {
+      // For KASA context, use opening balance from backend
+      // If not loaded yet, fallback to calculating from dailyTransactions (though it should be empty for before today)
+      if (openingBalance !== null) {
+        return openingBalance;
+      }
+      // Fallback: Calculate from dailyTransactions (should be 0 since dailyTransactions only has today's transactions)
+      const beforeToday = dailyTransactions
+        .filter(tx => tx.isoDate < today && tx.source === 'KASA')
+        .sort((a, b) => {
+          const aCreated = a.createdAtIso || a.isoDate + 'T00:00:00';
+          const bCreated = b.createdAtIso || b.isoDate + 'T00:00:00';
+          return aCreated.localeCompare(bCreated);
+        });
+      return beforeToday.reduce((sum, tx) => sum + (tx.incoming || 0) - (tx.outgoing || 0), BASE_CASH_BALANCE);
+    } else if (balanceContext.type === 'BANKA') {
+      // For bank context, use bank opening balance from backend
+      // If not loaded yet, fallback to calculating from banks only (without bankDelta)
+      if (bankOpeningBalances.has(balanceContext.bankId)) {
+        return bankOpeningBalances.get(balanceContext.bankId) || 0;
+      }
+      // Fallback: Calculate from banks only (should be incomplete since dailyTransactions only has today's transactions)
+      const bank = banks.find(b => b.id === balanceContext.bankId);
+      const bankOpeningBalance = bank?.acilisBakiyesi || 0;
+      const beforeToday = dailyTransactions
+        .filter(tx => tx.isoDate < today && tx.bankId === balanceContext.bankId && tx.bankDelta !== undefined && tx.bankDelta !== null)
+        .reduce((sum, tx) => sum + (tx.bankDelta || 0), 0);
+      return bankOpeningBalance + beforeToday;
+    } else if (balanceContext.type === 'BANKA_TOPLAM') {
+      // For total bank context, use total bank opening balance from backend
+      // If not loaded yet, fallback to calculating from banks only (without bankDelta)
+      if (totalBankOpeningBalance !== null) {
+        return totalBankOpeningBalance;
+      }
+      // Fallback: Calculate from banks only (should be incomplete since dailyTransactions only has today's transactions)
+      const totalOpening = banks.filter(b => b.aktifMi).reduce((sum, b) => sum + (b.acilisBakiyesi || 0), 0);
+      const beforeToday = dailyTransactions
+        .filter(tx => tx.isoDate < today && tx.bankDelta !== undefined && tx.bankDelta !== null)
+        .reduce((sum, tx) => sum + (tx.bankDelta || 0), 0);
+      return totalOpening + beforeToday;
+    }
+    return 0;
+  }, [balanceContext, dailyTransactions, today, banks, openingBalance, totalBankOpeningBalance, bankOpeningBalances]);
+
   // FINANCIAL INVARIANT: Compute context-aware running balance for today's transactions
   // This ensures credit card transactions don't affect KASA balance
   const todaysBalanceMap = useMemo(() => {
@@ -774,38 +914,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       return aCreated.localeCompare(bCreated);
     });
     
-    // Get initial balance based on context
-    let initialBalance = 0;
-    if (balanceContext.type === 'KASA') {
-      // For KASA context, initial balance is the cash balance before today
-      // We need to calculate from all KASA transactions before today
-      const beforeToday = dailyTransactions
-        .filter(tx => tx.isoDate < today && tx.source === 'KASA')
-        .sort((a, b) => {
-          const aCreated = a.createdAtIso || a.isoDate + 'T00:00:00';
-          const bCreated = b.createdAtIso || b.isoDate + 'T00:00:00';
-          return aCreated.localeCompare(bCreated);
-        });
-      initialBalance = beforeToday.reduce((sum, tx) => sum + (tx.incoming || 0) - (tx.outgoing || 0), BASE_CASH_BALANCE);
-    } else if (balanceContext.type === 'BANKA') {
-      // For bank context, initial balance is opening balance + all bankDelta before today
-      const bank = banks.find(b => b.id === balanceContext.bankId);
-      const openingBalance = bank?.acilisBakiyesi || 0;
-      const beforeToday = dailyTransactions
-        .filter(tx => tx.isoDate < today && tx.bankId === balanceContext.bankId && tx.bankDelta !== undefined && tx.bankDelta !== null)
-        .reduce((sum, tx) => sum + (tx.bankDelta || 0), 0);
-      initialBalance = openingBalance + beforeToday;
-    } else if (balanceContext.type === 'BANKA_TOPLAM') {
-      // For total bank context, sum all opening balances + all bankDelta before today
-      const totalOpening = banks.filter(b => b.aktifMi).reduce((sum, b) => sum + (b.acilisBakiyesi || 0), 0);
-      const beforeToday = dailyTransactions
-        .filter(tx => tx.isoDate < today && tx.bankDelta !== undefined && tx.bankDelta !== null)
-        .reduce((sum, tx) => sum + (tx.bankDelta || 0), 0);
-      initialBalance = totalOpening + beforeToday;
-    }
-    
     return computeRunningBalance(sorted, balanceContext, initialBalance);
-  }, [todaysTransactions, balanceContext, dailyTransactions, today, banks]);
+  }, [todaysTransactions, balanceContext, initialBalance]);
 
   const toggleSection = (key: string) => {
     setOpenSection((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -2582,11 +2692,51 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
               </div>
               {todaysTransactions.length === 0 && (
                 <div className="py-3 text-center text-slate-500 text-sm mt-3">
-                  Gün içi işlem yok.
+                  Devir bakiyesi dışında gün içi işlem yok.
                 </div>
               )}
               {/* Mobile: Card List */}
               <div className="mt-3 space-y-3 sm:hidden">
+                {/* Devir Bakiyesi - İlk Satır */}
+                <div className="border border-slate-200 rounded-lg p-3 space-y-2 bg-slate-50">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-sm truncate">
+                        {balanceContext.type === 'KASA' ? 'Kasa Gün Devir Bakiyesi' : balanceContext.type === 'BANKA' ? 'Banka Gün Devir Bakiyesi' : 'Banka Toplam Gün Devir Bakiyesi'}
+                      </div>
+                      <div className="text-xs text-slate-500">{isoToDisplay(today)}</div>
+                    </div>
+                    <div className="ml-2 flex items-center gap-2">
+                      <span className="text-xs sm:text-sm font-bold text-slate-600">-</span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-600 space-y-1">
+                    <div className="flex justify-between">
+                      <span>Belge No:</span>
+                      <span className="font-medium">-</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Kaynak:</span>
+                      <span className="font-medium truncate ml-2 text-right">
+                        {balanceContext.type === 'KASA' ? 'KASA' : balanceContext.type === 'BANKA' ? `BANKA (${banks.find(b => b.id === balanceContext.bankId)?.bankaAdi || ''})` : 'BANKA TOPLAM'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Muhatap:</span>
+                      <span className="font-medium truncate ml-2 text-right">-</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Açıklama:</span>
+                      <span className="font-medium truncate ml-2 text-right">Önceki günden devir</span>
+                    </div>
+                    <div className="flex justify-between pt-1 border-t border-slate-100">
+                      <span className="font-semibold">Bakiye:</span>
+                      <span className="font-bold">
+                        {formatTl(initialBalance)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
                 {todaysTransactions.map((tx) => {
                   // Fix Bug 6: Get bank name for bank transactions
                   const bankName = tx.bankId ? banks.find((b) => b.id === tx.bankId)?.bankaAdi : null;
@@ -2678,6 +2828,25 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                     </tr>
                   </thead>
                   <tbody>
+                    {/* Devir Bakiyesi - İlk Satır */}
+                    <tr className="border-b bg-slate-50">
+                      <td className="py-2 px-2">{isoToDisplay(today)}</td>
+                      <td className="py-2 px-2">-</td>
+                      <td className="py-2 px-2 font-semibold">
+                        {balanceContext.type === 'KASA' ? 'Kasa Gün Devir Bakiyesi' : balanceContext.type === 'BANKA' ? 'Banka Gün Devir Bakiyesi' : 'Banka Toplam Gün Devir Bakiyesi'}
+                      </td>
+                      <td className="py-2 px-2">
+                        {balanceContext.type === 'KASA' ? 'KASA' : balanceContext.type === 'BANKA' ? `BANKA (${banks.find(b => b.id === balanceContext.bankId)?.bankaAdi || ''})` : 'BANKA TOPLAM'}
+                      </td>
+                      <td className="py-2 px-2">-</td>
+                      <td className="py-2 px-2">Önceki günden devir</td>
+                      <td className="py-2 px-2 text-right">-</td>
+                      <td className="py-2 px-2 text-right">-</td>
+                      <td className="py-2 px-2 text-right font-semibold">
+                        {formatTl(initialBalance)}
+                      </td>
+                      <td className="py-2 px-2 text-right">-</td>
+                    </tr>
                     {todaysTransactions.map((tx) => {
                       // Fix Bug 6: Get bank name for bank transactions
                       const bankName = tx.bankId ? banks.find((b) => b.id === tx.bankId)?.bankaAdi : null;

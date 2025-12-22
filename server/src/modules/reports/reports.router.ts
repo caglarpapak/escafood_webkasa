@@ -7,9 +7,13 @@ import {
   kasaDefteriQuerySchema,
   nakitAkisQuerySchema,
 } from './reports.validation';
+import { authMiddleware } from '../auth/auth.middleware';
 import { z } from 'zod';
 
 const router = Router();
+
+// All report routes require authentication
+router.use(authMiddleware);
 
 /**
  * Validation middleware for query params
