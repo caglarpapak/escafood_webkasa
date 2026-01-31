@@ -30,6 +30,7 @@ export interface KrediKartiMasrafFormValues {
   kaydedenKullanici: string;
   isBeforeCutoff: boolean;
   slipFileName?: string;
+  slipImageDataUrl?: string;
 }
 
 interface Props {
@@ -57,6 +58,8 @@ export default function KrediKartiMasraf({
   const [aciklama, setAciklama] = useState('');
   const [tutar, setTutar] = useState<number | null>(null);
   const [slipFileName, setSlipFileName] = useState('');
+  const [slipImageDataUrl, setSlipImageDataUrl] = useState<string | null>(null);
+  const [slipFile, setSlipFile] = useState<File | null>(null);
   const [dirty, setDirty] = useState(false);
 
   const safeBanks = banks ?? [];
@@ -84,6 +87,8 @@ export default function KrediKartiMasraf({
       setAciklama('');
       setTutar(null);
       setSlipFileName('');
+      setSlipImageDataUrl(null);
+      setSlipFile(null);
       setDirty(false);
     }
   }, [isOpen]);
@@ -141,6 +146,7 @@ export default function KrediKartiMasraf({
       kaydedenKullanici: currentUserEmail,
       isBeforeCutoff,
       slipFileName: slipFileName || undefined,
+      slipImageDataUrl: slipImageDataUrl || undefined,
     });
   };
 
@@ -267,8 +273,22 @@ export default function KrediKartiMasraf({
               type="file"
               accept="image/*"
               onChange={(e) => {
-                const file = e.target.files?.[0];
-                setSlipFileName(file ? file.name : '');
+                const file = e.target.files?.[0] || null;
+                setSlipFile(file);
+                if (!file) {
+                  setSlipFileName('');
+                  setSlipImageDataUrl(null);
+                  setDirty(true);
+                  return;
+                }
+                setSlipFileName(file.name);
+                const reader = new FileReader();
+                reader.onload = () => {
+                  if (typeof reader.result === 'string') {
+                    setSlipImageDataUrl(reader.result);
+                  }
+                };
+                reader.readAsDataURL(file);
                 setDirty(true);
               }}
             />

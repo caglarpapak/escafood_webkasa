@@ -467,6 +467,7 @@ export class CreditCardsService {
           displayIncoming: null,
           displayOutgoing: data.amount,
           balanceAfter,
+          attachmentId: data.attachmentId ?? null, // Attachment must be uploaded via /api/attachments first
           createdBy, // KULLANICI / AUTH / AUDIT - 7.1: createdByUserId
           createdByEmail, // KULLANICI / AUTH / AUDIT - 7.1: createdByEmail
         },

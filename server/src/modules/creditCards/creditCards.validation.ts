@@ -30,6 +30,7 @@ export const createExpenseSchema = z.object({
   amount: z.number().positive('Tutar pozitif olmalıdır'),
   description: z.string().max(500).nullable().optional(),
   counterparty: z.string().max(200).nullable().optional(),
+  attachmentId: z.string().uuid('Geçerli bir attachment ID gereklidir').nullable().optional(),
 });
 
 export const createPaymentSchema = z.object({

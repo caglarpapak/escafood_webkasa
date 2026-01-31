@@ -75,6 +75,7 @@ export interface CreateExpenseDto {
   amount: number;
   description?: string | null;
   counterparty?: string | null;
+  attachmentId?: string | null; // Attachment must be uploaded via /api/attachments first
 }
 
 export interface CreatePaymentDto {

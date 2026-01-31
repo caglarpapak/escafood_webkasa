@@ -1941,11 +1941,6 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
       displayOutgoing: null, // BUG 5 FIX: Must be null/0 for POS_TAHSILAT_BRUT validation
       attachmentId: attachmentId, // Use uploaded attachment ID
     });
-      console.log('[Dashboard] POS_TAHSILAT_BRUT transaction created:', {
-        id: brutResponse.id,
-        attachmentId: attachmentId,
-        documentNo: documentNo,
-      });
 
       // Fix: POS commission transaction - outgoing=commissionAmount, bankDelta=-commissionAmount
       let komisyonResponse;
@@ -1983,11 +1978,6 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         createdAt: string;
         createdBy: string;
       }>('/api/transactions', komisyonPayload);
-        console.log('[Dashboard] POS_KOMISYONU transaction created:', {
-          id: komisyonResponse.id,
-          attachmentId: attachmentId,
-          documentNo: komisyonPayload.documentNo,
-        });
       
       } catch (komisyonError: any) {
         // Don't throw - continue with brut transaction only, but log the error
@@ -2176,6 +2166,30 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
 
   const handleKrediKartiMasrafSaved = async (values: KrediKartiMasrafFormValues) => {
     try {
+      // Upload attachment first if slip image provided
+      let attachmentId: string | null = null;
+      if (values.slipImageDataUrl) {
+        try {
+          const attachmentResponse = await apiPost<{
+            id: string;
+            fileName: string;
+            mimeType: string;
+            imageDataUrl: string;
+            createdAt: string;
+            createdBy: string | null;
+          }>('/api/attachments', {
+            imageDataUrl: values.slipImageDataUrl,
+            fileName: values.slipFileName || null,
+            type: 'POS_SLIP',
+          });
+          attachmentId = attachmentResponse.id;
+        } catch (attachmentError: any) {
+          console.error('Failed to upload attachment:', attachmentError);
+          alert(`Slip görseli yüklenemedi: ${attachmentError?.message || 'Bilinmeyen hata'}`);
+          return;
+        }
+      }
+
       const meta =
         values.masrafTuru === 'AKARYAKIT'
           ? values.plaka
@@ -2224,6 +2238,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         amount: values.tutar,
         description: values.aciklama || null,
         counterparty: counterparty || 'Masraf' || null,
+        attachmentId: attachmentId, // Use uploaded attachment ID
       });
 
       // Map backend transaction to frontend format
@@ -2241,11 +2256,13 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         balanceAfter: 0, // Will be recalculated
         bankDelta: 0,
         displayOutgoing: response.transaction.displayOutgoing ?? undefined,
+        attachmentId: attachmentId ?? undefined, // Include attachmentId if uploaded
         createdAtIso: new Date().toISOString(),
         createdBy: currentUser.email,
       };
 
-      addTransactions([tx]);
+      // CRITICAL FIX: Refresh all to get the transaction with attachmentId from backend
+      await refreshAll();
       
       // CRITICAL FIX: Update credit card state from response (single source of truth: backend)
       const cardExtrasKey = 'esca-webkasa-card-extras';
@@ -2911,7 +2928,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                           <div className="flex justify-between">
                             <span>Belge:</span>
                             <button
-                              className="text-xs text-blue-600 underline hover:text-blue-800 font-medium"
+                              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 transition-colors"
                               onClick={async () => {
                                 if (!tx.attachmentId) return;
                                 try {
@@ -2929,13 +2946,22 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                                                    tx.type === 'KREDI_KARTI_HARCAMA' ||
                                                    tx.type === 'KREDI_KARTI_EKSTRE_ODEME' ||
                                                    tx.type === 'KREDI_KARTI_MASRAF';
-                                  setPreviewTitle(attachment.fileName || (isPosSlip ? 'Slip' : 'Çek Görseli'));
+                                  const isCheque = tx.type === 'CEK_GIRISI' || 
+                                                   tx.type === 'CEK_TAHSIL_BANKA' || 
+                                                   tx.type === 'CEK_ODENMESI' || 
+                                                   tx.type === 'CEK_KARSILIKSIZ';
+                                  const attachmentTitle = isPosSlip ? 'Slip' : isCheque ? 'Çek Görseli' : 'Belge';
+                                  setPreviewTitle(attachment.fileName || attachmentTitle);
                                 } catch (error: any) {
                                   console.error('Failed to fetch attachment:', error);
                                   alert(`Görsel yüklenemedi: ${error?.message || 'Bilinmeyen hata'}`);
                                 }
                               }}
                             >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                              </svg>
                               Görüntüle
                             </button>
                           </div>
@@ -3008,21 +3034,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                           sourceLabel = `${creditCardName} - ${bankName}`;
                         }
                       }
-                      // DEBUG: Log row data at render time
-                      if (tx.type === 'POS_TAHSILAT_BRUT' || tx.type === 'POS_KOMISYONU' || 
-                          tx.type === 'KREDI_KARTI_HARCAMA' || tx.type === 'KREDI_KARTI_EKSTRE_ODEME' || 
-                          tx.type === 'KREDI_KARTI_MASRAF' || tx.type === 'CEK_GIRISI' || 
-                          tx.type === 'CEK_TAHSIL_BANKA' || tx.type === 'CEK_ODENMESI' || 
-                          tx.type === 'CEK_KARSILIKSIZ') {
-                        console.log('[Dashboard] Row render - transaction:', {
-                          id: tx.id,
-                          type: tx.type,
-                          attachmentId: tx.attachmentId,
-                          attachmentIdType: typeof tx.attachmentId,
-                          hasAttachment: !!tx.attachmentId,
-                        });
-                      }
                       // Check for attachment - show "Görüntüle" if attachmentId exists (not null/undefined)
+                      // Tüm transaction tipleri için attachmentId kontrolü yapılıyor
                       const hasAttachment = tx.attachmentId != null; // != null checks for both null and undefined
                       const isPosSlipType = tx.type === 'POS_TAHSILAT_BRUT' || 
                                            tx.type === 'POS_KOMISYONU' ||
@@ -3033,6 +3046,14 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                                           tx.type === 'CEK_TAHSIL_BANKA' || 
                                           tx.type === 'CEK_ODENMESI' || 
                                           tx.type === 'CEK_KARSILIKSIZ';
+                      
+                      // Determine attachment title based on transaction type
+                      let attachmentTitle = 'Belge';
+                      if (isPosSlipType) {
+                        attachmentTitle = 'Slip';
+                      } else if (isChequeType) {
+                        attachmentTitle = 'Çek Görseli';
+                      }
                       return (
                       <tr key={tx.id} className="border-b last:border-0">
                         <td className="py-2 px-2">{tx.displayDate}</td>
@@ -3046,7 +3067,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                         <td className="py-2 px-2">
                           {hasAttachment ? (
                             <button
-                              className="text-xs text-blue-600 underline hover:text-blue-800 font-medium"
+                              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 transition-colors"
                               onClick={async () => {
                                 if (!tx.attachmentId) return;
                                 try {
@@ -3059,17 +3080,21 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                                     createdBy: string | null;
                                   }>(`/api/attachments/${tx.attachmentId}`);
                                   setPreviewImageUrl(attachment.imageDataUrl);
-                                  setPreviewTitle(attachment.fileName || (isPosSlipType ? 'Slip' : 'Çek Görseli'));
+                                  setPreviewTitle(attachment.fileName || attachmentTitle);
                                 } catch (error: any) {
                                   console.error('Failed to fetch attachment:', error);
                                   alert(`Görsel yüklenemedi: ${error?.message || 'Bilinmeyen hata'}`);
                                 }
                               }}
                             >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                              </svg>
                               Görüntüle
                             </button>
                           ) : (
-                            '-'
+                            <span className="text-gray-400 text-xs">-</span>
                           )}
                         </td>
                         <td className="py-2 px-2 text-right text-emerald-600">
@@ -3351,19 +3376,32 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
 
       {/* Image Preview Modal */}
       {previewImageUrl && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-lg max-w-3xl max-h-[90vh] p-4 flex flex-col">
-            <div className="flex justify-between items-center mb-2">
-              <h2 className="text-sm font-semibold">{previewTitle}</h2>
+        <div 
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          onClick={() => setPreviewImageUrl(null)}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] p-6 flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4 pb-3 border-b">
+              <h2 className="text-lg font-semibold text-gray-800">{previewTitle}</h2>
               <button
-                className="text-xs text-gray-500 hover:text-gray-800"
+                className="text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full p-2 transition-colors"
                 onClick={() => setPreviewImageUrl(null)}
+                aria-label="Kapat"
               >
-                Kapat
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
-            <div className="flex-1 overflow-auto">
-              <img src={previewImageUrl} alt={previewTitle} className="max-w-full h-auto mx-auto" />
+            <div className="flex-1 overflow-auto flex items-center justify-center bg-gray-50 rounded">
+              <img 
+                src={previewImageUrl} 
+                alt={previewTitle} 
+                className="max-w-full max-h-[calc(90vh-120px)] h-auto object-contain" 
+              />
             </div>
           </div>
         </div>
