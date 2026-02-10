@@ -4,6 +4,7 @@ import { CreditCard } from '../models/card';
 import { Supplier } from '../models/supplier';
 import { BankMaster } from '../models/bank';
 import { todayIso, isoToDisplay } from '../utils/date';
+import { isTransactionInCurrentStatement } from '../utils/creditCard';
 import { formatTl } from '../utils/money';
 import MoneyInput from '../components/MoneyInput';
 import DateInput from '../components/DateInput';
@@ -93,8 +94,9 @@ export default function KrediKartiTedarikciOdeme({
   const handleSave = () => {
     if (!islemTarihiIso || !cardId || !supplierId || !selectedCard || !selectedSupplier) return;
     if (!tutar || tutar <= 0) return;
-    const dayOfMonth = parseInt(islemTarihiIso.split('-')[2] || '0', 10);
-    const isBeforeCutoff = dayOfMonth <= (selectedCard.hesapKesimGunu || 0);
+    const closingDay = selectedCard.hesapKesimGunu ?? 1;
+    const dueDay = selectedCard.sonOdemeGunu ?? 1;
+    const isBeforeCutoff = isTransactionInCurrentStatement(islemTarihiIso, closingDay, dueDay);
     const oldGuncel = selectedCard.guncelBorc || 0;
     const oldEkstre = selectedCard.sonEkstreBorcu || 0;
     const newGuncel = oldGuncel + tutar;
@@ -108,7 +110,7 @@ export default function KrediKartiTedarikciOdeme({
       `İşlem Tarihi: ${isoToDisplay(islemTarihiIso)}`,
       `Tutar: ${formatTl(tutar)}`,
       isBeforeCutoff
-        ? 'Hesap kesim tarihinden önce: Son ekstre borcuna eklenecek.'
+        ? 'Hesap kesim tarihinden önce veya kesim günü: Son ekstre borcuna eklenecek.'
         : 'Hesap kesim tarihinden sonra: Sonraki ekstreye yansıyacak.',
       `Güncel Borç: ${formatTl(oldGuncel)} → ${formatTl(newGuncel)}`,
       isBeforeCutoff ? `Son Ekstre: ${formatTl(oldEkstre)} → ${formatTl(newEkstre)}` : `Son Ekstre: ${formatTl(oldEkstre)}`,

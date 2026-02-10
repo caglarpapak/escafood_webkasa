@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Modal from '../components/ui/Modal';
 import { BankMaster } from '../models/bank';
 import { Customer } from '../models/customer';
@@ -414,47 +414,18 @@ const AyarlarModal: React.FC<Props> = ({
   const handleSaveBanks = async (banksToSave?: BankMaster[]): Promise<BankMaster[]> => {
     setLoading(true);
     try {
-      console.log('handleSaveBanks - called with banksToSave length:', banksToSave?.length ?? 'undefined');
-      console.log('handleSaveBanks - banksToSave type:', typeof banksToSave, 'isArray:', Array.isArray(banksToSave));
-      console.log('handleSaveBanks - localBanks length:', localBanks?.length ?? 'undefined');
-      console.log('handleSaveBanks - localBanks type:', typeof localBanks, 'isArray:', Array.isArray(localBanks));
-      
       // Use provided banks or fallback to localBanks state
-      // IMPORTANT: Check if banksToSave is provided and is an array
-      let banks: BankMaster[];
-      if (banksToSave !== undefined && banksToSave !== null) {
-        if (!Array.isArray(banksToSave)) {
-          console.error('banksToSave is not an array:', banksToSave, typeof banksToSave);
-          const errorMsg = `banksToSave parameter is not an array. Got: ${typeof banksToSave}`;
-          console.error('banksToSave error:', errorMsg, banksToSave);
-          throw new Error(errorMsg);
-        }
-        banks = banksToSave;
-    } else {
-        if (!Array.isArray(localBanks)) {
-          console.error('localBanks is not an array:', localBanks, typeof localBanks);
-          const errorMsg = `localBanks state is not an array. Got: ${typeof localBanks}`;
-          console.error('localBanks error:', errorMsg, localBanks);
-          throw new Error(errorMsg);
-        }
-        banks = localBanks;
-      }
-      
-      // Final validation that banks is an array
+      // Nota: Sadece gerçek array kabul et (event objesi veya yanlış tip gelebilir)
+      let banks: BankMaster[] = Array.isArray(banksToSave) ? banksToSave : localBanks;
       if (!Array.isArray(banks)) {
-        console.error('Banks data is not an array after assignment:', banks, 'banksToSave:', banksToSave, 'localBanks:', localBanks);
-        throw new Error(`Banks data is not an array after assignment. Got: ${typeof banks}`);
+        banks = [];
       }
       
       if (banks.length === 0) {
-        console.warn('No banks to save');
         setLoading(false);
         return [];
       }
-      
-      console.log('handleSaveBanks - saving', banks.length, 'banks');
-      console.log('handleSaveBanks - banks data:', banks);
-      
+
       // Prepare payload for bulk save
       const payload = banks.map((b) => {
         const accountNo = b.hesapAdi.includes(' - ') ? b.hesapAdi.split(' - ')[1] : null;
@@ -466,12 +437,8 @@ const AyarlarModal: React.FC<Props> = ({
           openingBalance: b.acilisBakiyesi ?? 0,
           isActive: b.aktifMi ?? true,
         };
-        console.log('handleSaveBanks - payload item:', item);
         return item;
       });
-
-      console.log('handleSaveBanks - full payload to send:', payload);
-      console.log('handleSaveBanks - payload length:', payload.length);
 
       // Save to backend
       type SavedBank = {
@@ -488,30 +455,15 @@ const AyarlarModal: React.FC<Props> = ({
       try {
         saved = await apiPost<SavedBank[]>('/api/banks/bulk-save', payload);
       } catch (apiError: any) {
-        console.error('handleSaveBanks - API error:', apiError);
-        console.error('handleSaveBanks - API error response:', apiError?.response);
         throw apiError;
       }
-
-      console.log('handleSaveBanks - backend response:', saved);
-      console.log('handleSaveBanks - backend response type:', typeof saved, 'isArray:', Array.isArray(saved));
       
       if (!saved) {
         throw new Error('Backend returned null or undefined');
       }
       
       if (!Array.isArray(saved)) {
-        console.error('Backend response is not an array:', saved);
         throw new Error(`Backend did not return an array. Got: ${typeof saved}`);
-      }
-      
-      if (saved.length === 0) {
-        console.warn('Backend returned empty array - this might be OK for updates');
-        // Don't throw error for empty array, just log it
-      }
-      
-      if (saved.length !== banks.length) {
-        console.warn(`Backend returned ${saved.length} banks but we sent ${banks.length}`);
       }
 
       // Map tmp-* IDs to real IDs: backend returns banks in same order as input
@@ -569,8 +521,6 @@ const AyarlarModal: React.FC<Props> = ({
       setBanks(mappedBanks);
       setDirty(false);
       
-      console.log('handleSaveBanks - successfully saved', mappedBanks.length, 'banks');
-      console.log('handleSaveBanks - saved banks:', mappedBanks);
       return mappedBanks;
     } catch (error: any) {
       console.error('Banks save error:', error);

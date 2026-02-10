@@ -19,7 +19,7 @@ const GlobalTab: React.FC<Props> = ({ settings, loading, onSave }) => {
       </div>
 
       <div className="settings-actions">
-        <button type="button" className="btn btn-primary" disabled={loading} onClick={onSave}>
+        <button type="button" className="btn btn-primary" disabled={loading} onClick={() => onSave()}>
           Kaydet
         </button>
       </div>

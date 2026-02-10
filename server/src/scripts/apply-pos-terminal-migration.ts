@@ -1,6 +1,7 @@
 /**
- * Manual migration script to create PosTerminal table
+ * Manual migration script to create PosTerminal table (PostgreSQL only)
  * Run this if Prisma migrate fails due to shadow database issues
+ * NOTA: Bu proje artık MySQL kullanıyor - bu script PostgreSQL içindir
  */
 
 import { PrismaClient } from '@prisma/client';

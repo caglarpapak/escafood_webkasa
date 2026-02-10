@@ -1,5 +1,6 @@
 import { PrismaClient, DailyTransactionType, DailyTransactionSource } from '@prisma/client';
 import { prisma } from '../../config/prisma';
+import { isTransactionInCurrentStatement } from '../../utils/creditCard';
 import {
   CreateCreditCardDto,
   UpdateCreditCardDto,
@@ -415,10 +416,15 @@ export class CreditCardsService {
     // Calculate balance after (will be 0 since incoming=0, outgoing=0, and source=KREDI_KARTI)
     const balanceAfter = await calculateBalanceAfter(data.isoDate, 0, 0, 'KREDI_KARTI');
 
-    // Determine if transaction date is before or on closing day
-    const transactionDay = parseInt(data.isoDate.split('-')[2] || '0', 10);
-    const closingDay = card.closingDay || 31; // Default to 31 if not set
-    const isBeforeCutoff = transactionDay <= closingDay;
+    // Determine if transaction is in current statement (before next closing date)
+    // FIX: Compare actual dates, not day-of-month (Jan 31 < Feb 2, not 31 > 2)
+    const closingDay = card.closingDay ?? 31;
+    const dueDay = card.dueDay ?? 7;
+    const isBeforeCutoff = isTransactionInCurrentStatement(
+      data.isoDate,
+      closingDay,
+      dueDay
+    );
 
     // Calculate new debt values
     const currentSonEkstreBorcu = card.sonEkstreBorcu !== null && card.sonEkstreBorcu !== undefined 

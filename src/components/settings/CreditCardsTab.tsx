@@ -144,7 +144,7 @@ const CreditCardsTab: React.FC<Props> = ({
       </div>
 
       <div className="settings-actions">
-        <button type="button" className="btn btn-primary" disabled={loading} onClick={onSave}>
+        <button type="button" className="btn btn-primary" disabled={loading} onClick={() => onSave()}>
           Kaydet
         </button>
       </div>

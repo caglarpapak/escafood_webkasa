@@ -1,57 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Dashboard from './Dashboard';
-import { AppUser } from './models/user';
-import { apiPost } from './utils/api';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+import { useAuth } from './contexts/AuthContext';
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const { user, isLoading, login, logout } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-
-  useEffect(() => {
-    // Check for saved token and validate it
-    const token = localStorage.getItem('esca-webkasa-token');
-    if (token) {
-      // Try to get user info from /api/auth/me
-      fetch(`${API_BASE_URL}/api/auth/me`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      })
-        .then(res => {
-          if (res.ok) {
-            return res.json();
-          }
-          // Token invalid, remove it
-          localStorage.removeItem('esca-webkasa-token');
-          return null;
-        })
-        .then(userData => {
-          if (userData) {
-            setCurrentUser({
-              id: userData.id,
-              email: userData.email,
-              ad: userData.name,
-              aktifMi: true,
-            });
-          }
-        })
-        .catch(() => {
-          localStorage.removeItem('esca-webkasa-token');
-        });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!currentUser) {
-      localStorage.removeItem('esca-webkasa-token');
-    }
-  }, [currentUser]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -59,40 +15,30 @@ export default function App() {
       return;
     }
 
-    setIsLoading(true);
+    setIsSubmitting(true);
     setLoginError(null);
 
     try {
-      const response = await apiPost<{ token: string; user: { id: string; name: string; email: string } }>('/api/auth/login', {
-        email,
-        password,
-      });
-
-      // Save token
-      localStorage.setItem('esca-webkasa-token', response.token);
-
-      // Set user
-      setCurrentUser({
-        id: response.user.id,
-        email: response.user.email,
-        ad: response.user.name,
-        aktifMi: true,
-      });
+      await login(email, password);
     } catch (error: any) {
       const errorMessage = error.response?.data?.message || error.message || 'Giriş yapılamadı';
       setLoginError(errorMessage);
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('esca-webkasa-token');
-    setCurrentUser(null);
-  };
+  // Token doğrulanırken kısa yükleme ekranı (refresh'te login formu flash etmesin)
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center">
+        <div className="text-slate-500">Yükleniyor...</div>
+      </div>
+    );
+  }
 
-  if (currentUser) {
-    return <Dashboard currentUser={currentUser} onLogout={handleLogout} />;
+  if (user) {
+    return <Dashboard currentUser={user} onLogout={logout} />;
   }
 
   return (
@@ -138,21 +84,12 @@ export default function App() {
               }}
             />
           </div>
-          <label className="inline-flex items-center space-x-2 text-sm">
-            <input
-              type="checkbox"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-              className="rounded"
-            />
-            <span>Beni hatırla</span>
-          </label>
           <button
             className="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-60"
             onClick={handleLogin}
-            disabled={!email || !password || isLoading}
+            disabled={!email || !password || isSubmitting}
           >
-            {isLoading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
+            {isSubmitting ? 'Giriş yapılıyor...' : 'Giriş Yap'}
           </button>
         </div>
       </div>

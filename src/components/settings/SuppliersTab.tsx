@@ -175,7 +175,7 @@ const SuppliersTab: React.FC<Props> = ({ suppliers, onSetSuppliers, onDirty, onS
       </div>
 
       <div className="settings-actions mt-4">
-        <button type="button" className="btn btn-primary" disabled={loading} onClick={onSave}>
+        <button type="button" className="btn btn-primary" disabled={loading} onClick={() => onSave()}>
           {loading ? 'Kaydediliyor...' : 'Kaydet'}
         </button>
       </div>

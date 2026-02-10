@@ -7,6 +7,7 @@ export async function seedUsers(prisma: PrismaClient) {
   try {
     const onurPasswordHash = await bcrypt.hash('248624', saltRounds);
     const hayrullahPasswordHash = await bcrypt.hash('397139', saltRounds);
+    const bulentPasswordHash = await bcrypt.hash('123456', saltRounds);
 
     // 1) Upsert Onur
     await prisma.user.upsert({
@@ -44,7 +45,25 @@ export async function seedUsers(prisma: PrismaClient) {
       },
     });
 
-    // 3) Find legacy/dev users (do NOT delete yet)
+    // 3) Upsert Bulent
+    await prisma.user.upsert({
+      where: { id: 'user-bulent' },
+      update: {
+        email: 'caglarpapak@gmail.com',
+        name: 'Bulent Caglar Papak',
+        passwordHash: bulentPasswordHash,
+        isActive: true,
+      },
+      create: {
+        id: 'user-bulent',
+        email: 'caglarpapak@gmail.com',
+        name: 'Bulent Caglar Papak',
+        passwordHash: bulentPasswordHash,
+        isActive: true,
+      },
+    });
+
+    // 4) Find legacy/dev users (do NOT delete yet)
     const legacyUsers = await prisma.user.findMany({
       where: {
         OR: [{ email: 'dev@esca.local' }, { id: 'x-user-id' }],
@@ -55,7 +74,7 @@ export async function seedUsers(prisma: PrismaClient) {
     if (legacyUsers.length > 0) {
       const legacyIds = legacyUsers.map((u) => u.id);
 
-      // 4) Re-assign foreign keys to Onur (user-onur) for all models
+      // 5) Re-assign foreign keys to Onur (user-onur) for all models
       // Update createdBy, updatedBy, and deletedBy fields
 
       // Transactions
@@ -212,7 +231,7 @@ export async function seedUsers(prisma: PrismaClient) {
         data: { deletedBy: 'user-onur' },
       });
 
-      // 5) Disable legacy users (FK-safe) and rename emails with unique suffix
+      // 6) Disable legacy users (FK-safe) and rename emails with unique suffix
       for (let i = 0; i < legacyUsers.length; i++) {
         const legacyUser = legacyUsers[i];
         const uniqueEmail = `disabled-dev-${legacyUser.id}@esca.local`;
@@ -228,7 +247,7 @@ export async function seedUsers(prisma: PrismaClient) {
       console.log(`✅ Legacy users disabled & reassigned to user-onur: ${legacyUsers.map(u => u.id).join(', ')}`);
     }
 
-    console.log('✅ Seed users completed: Onur & Hayrullah');
+    console.log('✅ Seed users completed: Onur, Hayrullah & Bulent');
   } catch (error) {
     console.error('❌ seedUsers failed:', error);
     throw error;

@@ -84,6 +84,7 @@ export interface DailyTransaction {
   outgoing: number;
   balanceAfter: number;
   bankId?: string;
+  creditCardId?: string | null;
   bankDelta?: number;
   displayIncoming?: number;
   displayOutgoing?: number;

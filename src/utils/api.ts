@@ -1,10 +1,18 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+const TOKEN_KEY = 'esca-webkasa-token';
+const AUTH_UNAUTHORIZED_EVENT = 'auth:unauthorized';
 
 /**
  * Get JWT token from localStorage
  */
 function getAuthToken(): string | null {
-  return localStorage.getItem('esca-webkasa-token');
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+/** 401 durumunda token temizle ve global logout tetikle */
+function handleUnauthorized(): void {
+  localStorage.removeItem(TOKEN_KEY);
+  window.dispatchEvent(new CustomEvent(AUTH_UNAUTHORIZED_EVENT));
 }
 
 export async function apiRequest<T>(
@@ -30,6 +38,9 @@ export async function apiRequest<T>(
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      handleUnauthorized();
+    }
     let errorData: any;
     try {
       errorData = await response.json();

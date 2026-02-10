@@ -150,7 +150,7 @@ const PosTab: React.FC<Props> = ({ terminals, banks, onSetTerminals, onDirty, on
             <button className="btn btn-primary" onClick={handleSave} disabled={loading}>
               {editingId ? 'Güncelle' : 'Ekle'}
             </button>
-            <button className="btn btn-secondary" onClick={onSave} disabled={loading}>
+            <button className="btn btn-secondary" onClick={() => onSave()} disabled={loading}>
               {loading ? 'Kaydediliyor...' : 'Tümünü Kaydet'}
             </button>
           </div>

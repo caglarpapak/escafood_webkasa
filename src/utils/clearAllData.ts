@@ -16,6 +16,7 @@ export function clearAllLocalStorageData() {
   console.log('🧹 Clearing all localStorage data...');
   
   const keysToRemove = [
+    'esca-webkasa-token', // JWT auth token
     'esca-webkasa-user',
     'esca-webkasa-bank-flags', // FIX: Use correct key with hyphens
     'esca-webkasa-card-extras', // FIX: Use correct key with hyphens

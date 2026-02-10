@@ -573,6 +573,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             outgoing: Number(tx.outgoing) ?? 0,
             balanceAfter: Number(tx.balanceAfter) ?? 0,
             bankId: tx.bankId || undefined,
+            creditCardId: tx.creditCardId ?? undefined,
             bankDelta: tx.bankDelta !== undefined && tx.bankDelta !== null ? Number(tx.bankDelta) : undefined, // CRITICAL FIX: Preserve bankDelta including negative values (0 is falsy!)
             displayIncoming: tx.displayIncoming || undefined,
             displayOutgoing: tx.displayOutgoing || undefined,
@@ -684,6 +685,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
             outgoing: Number(tx.outgoing) ?? 0, // BUG 4 FIX: Use ?? instead of || to preserve 0
             balanceAfter: Number(tx.balanceAfter) ?? 0, // BUG 4 FIX: Use balanceAfter from backend (calculated correctly)
             bankId: tx.bankId || undefined,
+            creditCardId: tx.creditCardId ?? undefined,
             bankDelta: tx.bankDelta || undefined,
             displayIncoming: tx.displayIncoming || undefined,
             displayOutgoing: tx.displayOutgoing || undefined,
@@ -2114,6 +2116,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         outgoing: 0,
         balanceAfter: 0, // Will be recalculated
         bankDelta: 0,
+        creditCardId: values.cardId,
         displayOutgoing: response.transaction.displayOutgoing ?? undefined,
         createdAtIso: new Date().toISOString(),
         createdBy: currentUser.email,
@@ -2255,6 +2258,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
         outgoing: 0,
         balanceAfter: 0, // Will be recalculated
         bankDelta: 0,
+        creditCardId: values.cardId,
         displayOutgoing: response.transaction.displayOutgoing ?? undefined,
         attachmentId: attachmentId ?? undefined, // Include attachmentId if uploaded
         createdAtIso: new Date().toISOString(),
@@ -2912,6 +2916,12 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                           <span>Kaynak:</span>
                           <span className="font-medium truncate ml-2 text-right">{sourceLabel}</span>
                         </div>
+                        {creditCardName && (
+                          <div className="flex justify-between">
+                            <span>Kart:</span>
+                            <span className="font-medium truncate ml-2 text-right">{creditCardName}</span>
+                          </div>
+                        )}
                         {tx.counterparty && (
                           <div className="flex justify-between">
                             <span>Muhatap:</span>
@@ -2985,6 +2995,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                       <th className="py-2 px-2 text-left">Tarih</th>
                       <th className="py-2 px-2 text-left">Belge No</th>
                       <th className="py-2 px-2 text-left">Tür</th>
+                      <th className="py-2 px-2 text-left">Kart</th>
                       <th className="py-2 px-2 text-left">Kaynak</th>
                       <th className="py-2 px-2 text-left">Muhatap</th>
                       <th className="py-2 px-2 text-left">Açıklama</th>
@@ -3003,6 +3014,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                       <td className="py-2 px-2 font-semibold">
                         {balanceContext.type === 'KASA' ? 'Kasa Gün Devir Bakiyesi' : balanceContext.type === 'BANKA' ? 'Banka Gün Devir Bakiyesi' : 'Banka Toplam Gün Devir Bakiyesi'}
                       </td>
+                      <td className="py-2 px-2">-</td>
                       <td className="py-2 px-2">
                         {balanceContext.type === 'KASA' ? 'KASA' : balanceContext.type === 'BANKA' ? `BANKA (${banks.find(b => b.id === balanceContext.bankId)?.bankaAdi || ''})` : 'BANKA TOPLAM'}
                       </td>
@@ -3020,8 +3032,8 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                       // Fix Bug 6: Get bank name for bank transactions
                       const bankName = tx.bankId ? banks.find((b) => b.id === tx.bankId)?.bankaAdi : null;
                       // Fix Bug 6: Get credit card name for credit card transactions
-                      const creditCardName = (tx as any).creditCardId 
-                        ? creditCards.find((c) => c.id === (tx as any).creditCardId)?.kartAdi 
+                      const creditCardName = tx.creditCardId
+                        ? creditCards.find((c) => c.id === tx.creditCardId)?.kartAdi
                         : null;
                       // Build source label with bank/card info
                       let sourceLabel = tx.source;
@@ -3059,6 +3071,7 @@ export default function Dashboard({ currentUser, onLogout }: DashboardProps) {
                         <td className="py-2 px-2">{tx.displayDate}</td>
                         <td className="py-2 px-2">{tx.documentNo}</td>
                         <td className="py-2 px-2">{tx.type}</td>
+                        <td className="py-2 px-2">{creditCardName ?? '-'}</td>
                         <td className="py-2 px-2">
                           {sourceLabel}
                         </td>
